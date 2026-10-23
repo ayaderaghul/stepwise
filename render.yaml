@@ -1,10 +1,16 @@
 services:
   - type: web
-    name: stepwise
-    runtime: static
-    buildCommand: ""
-    staticPublishPath: .
-    headers:
-      - path: /*
-        name: Cache-Control
-        value: public, max-age=300
+    name: stepwise-app
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false   # paste the Neon connection string in the Render dashboard
+      - key: INVITE_CODE
+        sync: false   # the code needed to create an account

@@ -1041,7 +1041,7 @@ class Component extends DCLogic {
         gem: gemPixels(q.family, 2), gemColor: g.color,
         rewardLabel: isSolved ? g.plural + ' collected' : (g.rare ? '+1 ' + g.name.toLowerCase() + ' · RARE' : '+' + r + ' ' + g.plural),
         cta: isSolved ? 'REPLAY' : 'START ▶',
-        solved: isSolved, family: q.family,
+        solved: isSolved, family: q.family, isSaved: isSaved,
         locked: locked, unlocked: !locked, fresh: !!s.fresh[i],
         reqs: reqsFor(q, s.gems, s.solved), lockWhy: locked ? whyFor(q, s.gems, s.solved) : '',
         hasBuilds: !!(rule.after && rule.after.length), buildsOn: (rule.after || []).join(' + '),
@@ -1059,7 +1059,8 @@ class Component extends DCLogic {
     // Open quests first, locked ones after, so the feed reads as "what you can do now".
     posts = posts.filter(function (x) { return !x.locked; }).concat(posts.filter(function (x) { return x.locked; }));
     var allCount = posts.length;
-    if (s.filter !== 'all') posts = posts.filter(function (x) { return x.family === s.filter; });
+    if (s.filter === 'saved') posts = posts.filter(function (x) { return x.isSaved; });
+    else if (s.filter !== 'all') posts = posts.filter(function (x) { return x.family === s.filter; });
     var solvedCount = Object.keys(s.solved).length;
     var chipKeys = ['all'].concat(GEM_ORDER.filter(function (f) { return PROBLEMS.some(function (q) { return q.family === f; }); }));
     var chips = chipKeys.map(function (k) {
@@ -1071,7 +1072,7 @@ class Component extends DCLogic {
         pick: function () { self.setState({ filter: k }); }
       };
     });
-    var feedCount = (s.filter === 'all' ? 'Taro 75 + 3 bonus' : s.filter) + ' · ' + posts.length + ' of ' + allCount + ' · ' + solvedCount + ' cleared';
+    var feedCount = (s.filter === 'all' ? 'Taro 75 + 3 bonus' : s.filter === 'saved' ? 'Saved for later' : s.filter) + ' · ' + posts.length + ' of ' + allCount + ' · ' + solvedCount + ' cleared';
 
     var segCount = total + 2;
     var pos = inReview ? total + 1 : (inCode ? total : s.step);
