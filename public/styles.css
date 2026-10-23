@@ -191,3 +191,14 @@ input:focus { outline: 3px dashed var(--accent); outline-offset: 3px; }
 .attempt-tag { font-family: var(--pixel); font-size: 8px; color: var(--muted); flex: 0 0 auto; }
 .attempt-tag.first { color: var(--green); }
 .code-view { white-space: pre; overflow-x: auto; }
+
+/* ---- boss stage results ---- */
+.quest-gain { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 14px; background: #2A2150; border: 3px solid var(--accent); box-shadow: 4px 4px 0 var(--shadow); }
+.burst.small { min-height: 0; padding: 0; }
+.fail { display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; background: #2A1020; border: 3px solid #FF5C5C; box-shadow: 4px 4px 0 var(--shadow); }
+.fail p { margin: 0; font-size: 20px; line-height: 1.15; color: #FFC2CC; }
+.fail-title { font-size: 10px; line-height: 1.6; color: #FF8A8A; }
+.io { display: flex; flex-direction: column; gap: 4px; }
+.io .px { font-size: 8px; color: var(--muted); }
+.io pre { margin: 0; padding: 8px 10px; background: var(--deep); border: 2px solid var(--line); font-family: var(--body); font-size: 18px; line-height: 1.15; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
+.attempt-tag.failed { color: #FF8A8A; }

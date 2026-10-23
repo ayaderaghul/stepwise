@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS attempts (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS attempts_user_time_idx ON attempts(user_id, created_at DESC);
+
+-- Test results, added when the boss stage started running real tests.
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS passed BOOLEAN NOT NULL DEFAULT true;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS tests_passed INTEGER;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS tests_total INTEGER;
+ALTER TABLE attempts ADD COLUMN IF NOT EXISTS failure TEXT;
 `;
 
 export async function migrate(): Promise<void> {

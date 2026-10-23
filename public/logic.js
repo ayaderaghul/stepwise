@@ -994,13 +994,45 @@ var REWARD = { Easy: 3, Medium: 5, Hard: 8 };
 var BADGE = { Easy: ['#3DDC84', '#0B2A18'], Medium: ['#FFB347', '#3A2000'], Hard: ['#FF5C5C', '#2A0000'] };
 var TAG = { Good: '#3DDC84', Consider: '#4FD6FF', Style: '#C3A6FF', Watch: '#FFB347' };
 
+// Gems are paid in two parts: a share for finishing the Socratic quests, the rest for beating the boss
+// (all tests pass). Rare gems only drop from the boss.
+function questPartFor(q) { return GEMS[q.family].rare ? 0 : Math.floor(rewardFor(q) / 2); }
+function newlyUnlocked(oldGems, oldSolved, gems, solved, fresh) {
+  var unlocks = [];
+  PROBLEMS.forEach(function (q, i) {
+    if (isLocked(q, oldGems, oldSolved) && !isLocked(q, gems, solved)) { unlocks.push({ title: q.title, gem: gemPixels(q.family, 2) }); fresh[i] = true; }
+  });
+  return unlocks;
+}
+
 class Component extends DCLogic {
   st() {
-    return Object.assign({ screen: 'feed', pid: 0, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', saved: {}, solved: {}, gems: {}, gain: 0, reviewed: false, fresh: {}, unlocks: [], filter: 'all', shards: {}, shardGain: [], fused: [] }, this.state || {});
+    return Object.assign({ screen: 'feed', pid: 0, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', saved: {}, solved: {}, gems: {}, gain: 0, reviewed: false, fresh: {}, unlocks: [], filter: 'all', shards: {}, shardGain: [], fused: [], questDone: {}, questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0 }, this.state || {});
   }
   start(pid) {
     var fresh = Object.assign({}, this.st().fresh); delete fresh[pid];
-    this.setState({ screen: 'walk', pid: pid, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', reviewed: false, gain: 0, unlocks: [], fresh: fresh, shardGain: [], fused: [] });
+    this.setState({ screen: 'walk', pid: pid, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', reviewed: false, gain: 0, unlocks: [], fresh: fresh, shardGain: [], fused: [], questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0 });
+  }
+  // Called by the page after the tests ran. report: { passed, total, ms, fail, fatal, logs }
+  bossResult(report) {
+    var s = this.st();
+    var p = PROBLEMS[s.pid];
+    var allPassed = !report.fatal && report.total > 0 && report.passed === report.total;
+    if (!allPassed) { this.setState({ judging: false, report: report, bossTries: s.bossTries + 1 }); return; }
+    var first = !s.solved[s.pid];
+    var g = first ? rewardFor(p) - (s.questDone[s.pid] ? questPartFor(p) : 0) : 0;
+    var solved = Object.assign({}, s.solved); solved[s.pid] = true;
+    var gems = Object.assign({}, s.gems); gems[p.family] = (gems[p.family] || 0) + g;
+    var shards = Object.assign({}, s.shards);
+    var shardGain = [], fused = [];
+    if (first) shardFamilies(p).forEach(function (f) {
+      shards[f] = (shards[f] || 0) + 1;
+      shardGain.push(GEMS[f].name.toLowerCase());
+      if (shards[f] >= SHARDS_PER_GEM) { shards[f] -= SHARDS_PER_GEM; gems[f] = (gems[f] || 0) + 1; fused.push(GEMS[f].name.toUpperCase()); }
+    });
+    var fresh = Object.assign({}, s.fresh);
+    var unlocks = newlyUnlocked(s.gems, s.solved, gems, solved, fresh);
+    this.setState({ judging: false, report: report, reviewed: true, solved: solved, gems: gems, gain: g, unlocks: unlocks, fresh: fresh, shards: shards, shardGain: shardGain, fused: fused });
   }
   renderVals() {
     var s = this.st();
@@ -1039,7 +1071,8 @@ class Component extends DCLogic {
         title: q.title, topic: q.topic, mono: q.mono, diff: q.diff.toUpperCase(), prompt: q.prompt, example: q.example,
         meta: q.steps.length + ' quests, then a boss stage',
         gem: gemPixels(q.family, 2), gemColor: g.color,
-        rewardLabel: isSolved ? g.plural + ' collected' : (g.rare ? '+1 ' + g.name.toLowerCase() + ' · RARE' : '+' + r + ' ' + g.plural),
+        rewardLabel: isSolved ? g.plural + ' collected' : (g.rare ? '+1 ' + g.name.toLowerCase() + ' · RARE'
+          : s.questDone[i] ? '+' + (r - questPartFor(q)) + ' left at the boss' : '+' + r + ' ' + g.plural),
         cta: isSolved ? 'REPLAY' : 'START ▶',
         solved: isSolved, family: q.family, isSaved: isSaved,
         locked: locked, unlocked: !locked, fresh: !!s.fresh[i],
@@ -1116,34 +1149,39 @@ class Component extends DCLogic {
       },
       nextStep: function () {
         var n = s.step + 1;
-        self.setState({ step: n, draft: '', revealed: false, tipOpen: false, code: n >= total ? p.starter : s.code });
+        var patch = { step: n, draft: '', revealed: false, tipOpen: false, code: n >= total ? p.starter : s.code };
+        // Finishing the quests pays the first share of the gems, once per problem.
+        if (n >= total && !s.questDone[s.pid] && !s.solved[s.pid]) {
+          var part = questPartFor(p);
+          var questDone = Object.assign({}, s.questDone); questDone[s.pid] = true;
+          var gems = Object.assign({}, s.gems); gems[p.family] = (gems[p.family] || 0) + part;
+          var fresh = Object.assign({}, s.fresh);
+          patch.questDone = questDone; patch.gems = gems; patch.questGain = part; patch.fresh = fresh;
+          patch.questUnlocks = newlyUnlocked(s.gems, s.solved, gems, s.solved, fresh);
+        }
+        self.setState(patch);
       },
       plan: p.steps.map(function (st, i) { return { q: st.q, a: s.answers[i] || '—' }; }),
       code: s.code, onCode: function (e) { self.setState({ code: e.target.value }); },
-      submitCode: function () {
-        var first = !s.solved[s.pid];
-        var g = first ? rewardFor(p) : 0;
-        var solved = Object.assign({}, s.solved); solved[s.pid] = true;
-        var gems = Object.assign({}, s.gems); gems[p.family] = (gems[p.family] || 0) + g;
-        var shards = Object.assign({}, s.shards);
-        var shardGain = [], fused = [];
-        if (first) shardFamilies(p).forEach(function (f) {
-          shards[f] = (shards[f] || 0) + 1;
-          shardGain.push(GEMS[f].name.toLowerCase());
-          if (shards[f] >= SHARDS_PER_GEM) { shards[f] -= SHARDS_PER_GEM; gems[f] = (gems[f] || 0) + 1; fused.push(GEMS[f].name.toUpperCase()); }
-        });
-        var fresh = Object.assign({}, s.fresh);
-        var unlocks = [];
-        PROBLEMS.forEach(function (q, i) {
-          if (isLocked(q, s.gems, s.solved) && !isLocked(q, gems, solved)) { unlocks.push({ title: q.title, gem: gemPixels(q.family, 2) }); fresh[i] = true; }
-        });
-        self.setState({ reviewed: true, solved: solved, gems: gems, gain: g, unlocks: unlocks, fresh: fresh, shards: shards, shardGain: shardGain, fused: fused });
-      },
+      // The page sees `judging`, runs the tests, then calls bossResult().
+      submitCode: function () { if (!s.judging) self.setState({ judging: true }); },
+      judging: !!s.judging,
+      bossLabel: s.judging ? 'RUNNING TESTS…' : s.report ? 'RUN TESTS AGAIN ▶' : 'RUN TESTS ▶',
+      bossPrize: s.solved[s.pid] ? 'Already cleared — replaying for practice.'
+        : pg.rare ? 'Beat the boss for the rare ' + pg.name.toLowerCase() + '.'
+        : 'Beat the boss (all tests pass) for +' + (rewardFor(p) - (s.questDone[s.pid] ? questPartFor(p) : 0)) + ' ' + pg.plural + '.',
+      hasQuestGain: s.questGain > 0,
+      questLine: '+' + s.questGain + ' ' + (s.questGain === 1 ? pg.name : pg.plural).toUpperCase() + ' FOR FINISHING THE QUESTS',
+      questUnlocks: s.questUnlocks, hasQuestUnlocks: s.questUnlocks.length > 0,
+      hasReport: !!(s.report && inCode),
+      report: s.report,
+      bossTries: s.bossTries,
       burst: burst,
       gainLabel: s.gain > 0 ? '+' + s.gain + ' ' + (s.gain === 1 ? pg.name : pg.plural).toUpperCase() : 'ALREADY CLEARED · NO NEW GEMS',
+      bossTriesLine: s.bossTries > 0 ? 'Cleared after ' + (s.bossTries + 1) + ' tries' : 'Cleared on the first try',
       rareDrop: !!pg.rare && s.gain > 0,
       rv: {
-        tests: p.review.tests, time: p.review.time, space: p.review.space, followup: p.review.followup,
+        tests: s.report ? s.report.passed + ' of ' + s.report.total + ' tests passed · ' + (s.report.ms < 1 ? 'under 1 ms' : s.report.ms + ' ms') : p.review.tests, time: p.review.time, space: p.review.space, followup: p.review.followup,
         notes: p.review.notes.map(function (n) { return { tag: n.tag.toUpperCase(), text: n.text, tagBg: TAG[n.tag] || TAG.Consider }; })
       },
       backToFeed: function () { self.setState({ screen: 'feed', reviewed: false }); },

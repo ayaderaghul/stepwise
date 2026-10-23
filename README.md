@@ -15,7 +15,22 @@ Progress and every attempt are saved to your account, so they follow you across 
 - **Accounts**: username + password; sign-up needs an invite code.
 - **Log**: day streak, a 30-day activity grid, and every attempt with your answers and code.
 
-The code review is still a fixed mock per problem.
+- **Boss stage**: your TypeScript runs against real tests. Finishing the quests pays part of the gems; the rest,
+  plus shards and unlocks, only when every test passes. Failures show the input, expected and actual output.
+
+The written reviewer notes are still fixed per problem (AI review is a planned next step).
+
+## How the tests run
+
+1. The server strips TypeScript types with the TypeScript compiler (`POST /api/transpile`). It never runs your code.
+2. The browser runs the code in a Web Worker (`public/runner.js`). That file is served with a CSP that allows
+   `eval` but no network, and fetch/XHR/WebSocket are removed before your code runs.
+3. Each test case has a 3-second limit; the page kills the worker if it is exceeded.
+
+Tests live in `tests-src/problems.mjs` as inputs plus a reference solution. `npm run tests:build` runs every
+reference solution to compute the expected outputs, checks each reference passes its own comparator, and writes
+`public/tests.js` (372 cases across 78 problems). Comparators handle any-order answers, floats, in-place edits,
+linked lists, trees, design classes, and problems with several valid answers.
 
 ## Stack
 

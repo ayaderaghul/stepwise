@@ -45,12 +45,12 @@
   // ---------------- progress sync ----------------
   function progressSnapshot() {
     var s = game.state || {};
-    return { solved: s.solved || {}, gems: s.gems || {}, shards: s.shards || {}, saved: s.saved || {}, fresh: s.fresh || {} };
+    return { solved: s.solved || {}, gems: s.gems || {}, shards: s.shards || {}, saved: s.saved || {}, fresh: s.fresh || {}, questDone: s.questDone || {} };
   }
   function applyProgress(saved) {
     // Always open on the full feed, whatever filter was last used on another device.
     game.state = Object.assign({}, game.state, saved || {}, {
-      screen: 'feed', reviewed: false, unlocks: [], shardGain: [], fused: [], gain: 0, filter: 'all'
+      screen: 'feed', reviewed: false, unlocks: [], shardGain: [], fused: [], gain: 0, filter: 'all', judging: false, report: null
     });
   }
   var lastSaved = '';
@@ -71,25 +71,78 @@
     }, 800);
   }
 
-  // Record each submitted solution, with the answer typed for every question.
-  var wasReviewed = false;
+  // Record every boss run (passed or failed), with the answer typed for every question.
+  var lastReport = null;
   function recordAttemptIfNew() {
     var s = game.state || {};
-    var nowReviewed = s.screen === 'walk' && s.reviewed;
-    if (nowReviewed && !wasReviewed) {
+    var rep = s.report;
+    if (rep && rep !== lastReport && s.screen === 'walk') {
       var p = PROBLEMS[s.pid];
+      var passed = !rep.fatal && rep.total > 0 && rep.passed === rep.total;
       api('/attempts', {
         method: 'POST',
         body: {
           title: p.title, rank: p.rank || null, family: p.family, difficulty: p.diff,
           answers: (s.answers || []).map(function (a) { return a || ''; }),
-          code: s.code || '', firstClear: (s.gain || 0) > 0, gemsEarned: s.gain || 0
+          code: s.code || '', firstClear: passed && (s.gain || 0) > 0, gemsEarned: passed ? (s.gain || 0) : 0,
+          passed: passed, testsPassed: rep.passed, testsTotal: rep.total, failure: passed ? null : failureText(rep)
         }
       }).then(function (r) {
         if (!r.ok) notify(r.status === 401 ? 'Signed out — sign in again to keep saving.' : 'Couldn’t save this attempt: ' + (r.data.error || 'server error'));
       });
     }
-    wasReviewed = nowReviewed;
+    lastReport = rep || null;
+  }
+  function failureText(rep) {
+    if (rep.fatal) return rep.fatal;
+    var f = rep.fail || {};
+    return 'Test ' + ((f.index || 0) + 1) + ': ' + (f.error ? f.error + ' ' : '') + 'input ' + (f.input || '') + ' · expected ' + (f.expected || '') + ' · got ' + (f.got || '');
+  }
+
+  // ---------------- boss stage: run the tests in a sandboxed worker ----------------
+  var judgingNow = false;
+  var CASE_TIME_LIMIT = 3000;
+  function runBossIfNeeded() {
+    var s = game.state || {};
+    if (!s.judging || judgingNow) return;
+    judgingNow = true;
+    var p = PROBLEMS[s.pid];
+    var finish = function (report) { judgingNow = false; game.bossResult(report); };
+    api('/transpile', { method: 'POST', body: { code: s.code || '' } }).then(function (r) {
+      if (!r.ok) return finish({ passed: 0, total: 0, ms: 0, fatal: r.status === 401 ? 'You were signed out — sign in again, then rerun.' : (r.data.error || 'Couldn’t prepare your code.') });
+      if (r.data.error) return finish({ passed: 0, total: 0, ms: 0, fatal: 'Syntax error — ' + r.data.error });
+      runInWorker(p.title, r.data.js).then(finish);
+    });
+  }
+  function runInWorker(title, js) {
+    return new Promise(function (resolve) {
+      var worker = new Worker('/runner.js');
+      var total = 0, passed = 0, done = 0, ms = 0, fail = null, timer = null, over = false;
+      function end(extra) {
+        if (over) return; over = true;
+        clearTimeout(timer); worker.terminate();
+        resolve(Object.assign({ passed: passed, total: total, ms: Math.round(ms), fail: fail }, extra));
+      }
+      function arm() {
+        clearTimeout(timer);
+        timer = setTimeout(function () {
+          end({
+            total: total || 1, timedOut: true,
+            fail: fail || { index: done, input: '', expected: '', got: '—', error: 'Time limit: test ' + (done + 1) + ' ran for over ' + CASE_TIME_LIMIT / 1000 + ' seconds. An infinite loop, or a much slower algorithm than needed?' }
+          });
+        }, CASE_TIME_LIMIT);
+      }
+      worker.onmessage = function (e) {
+        var m = e.data;
+        if (m.type === 'fatal') end({ fatal: m.error, logs: m.logs });
+        else if (m.type === 'start') { total = m.total; arm(); }
+        else if (m.type === 'case') { done++; ms += m.result.ms; if (m.result.ok) passed++; else if (!fail) fail = m.result; arm(); }
+        else if (m.type === 'done') end({ logs: m.logs });
+      };
+      worker.onerror = function (e) { e.preventDefault(); end({ fatal: e.message || 'The test runner crashed.' }); };
+      arm();
+      worker.postMessage({ title: title, js: js });
+    });
   }
 
   // ---------------- boot & auth ----------------
@@ -323,16 +376,23 @@
       }
     } else if (v.isCode) {
       main = '<h1 class="boss">BOSS STAGE: CODE IT</h1>' +
+        (v.hasQuestGain ? '<section class="quest-gain"><div class="burst small" aria-hidden="true">' + gem(v.cur.gem) + '</div>' +
+          '<span class="px" style="font-size:9px;line-height:1.6;color:' + v.cur.gemColor + '">' + esc(v.questLine) + '</span>' +
+          (v.hasQuestUnlocks ? '<span class="tag">Unlocked: ' + esc(v.questUnlocks.map(function (u) { return u.title; }).join(', ')) + '</span>' : '') +
+          '</section>' : '') +
+        '<p class="tag" style="margin:0">' + esc(v.bossPrize) + '</p>' +
         '<details><summary>YOUR REASONING SO FAR</summary><ol>' +
         v.plan.map(function (it) { return '<li><span class="muted">' + esc(it.q) + '</span><br><span style="color:#FFD23F">' + esc(it.a) + '</span></li>'; }).join('') +
         '</ol></details>' +
         '<div class="field"><div style="display:flex;justify-content:space-between;align-items:center"><label for="code">SOLUTION.TS</label><span class="muted" style="font-size:18px">TypeScript</span></div>' +
-        '<textarea id="code" class="code" data-field="code" spellcheck="false">' + esc(v.code) + '</textarea></div>';
-      foot = '<button class="btn big" data-act="' + act(v.submitCode) + '">SUBMIT FOR REVIEW ▶</button>';
+        '<textarea id="code" class="code" data-field="code" spellcheck="false"' + (v.judging ? ' readonly' : '') + '>' + esc(v.code) + '</textarea></div>' +
+        (v.hasReport ? reportPanel(v.report, v.bossTries) : '');
+      foot = '<button class="btn big" data-act="' + act(v.submitCode) + '"' + (v.judging ? ' disabled' : '') + '>' + esc(v.bossLabel) + '</button>';
     } else {
       var burst = v.burst.map(function (g) { return '<div class="gem-pop">' + gem(g) + '</div>'; }).join('');
       main = '<section class="clear" style="border-color:' + v.cur.gemColor + '">' +
           '<span class="title">STAGE CLEAR!</span><span style="color:#3DDC84">' + esc(v.rv.tests) + '</span>' +
+          '<span class="tag">' + esc(v.bossTriesLine) + '</span>' +
           (v.rareDrop ? '<span class="rare-drop blink">★ RARE DROP ★</span>' : '') +
           '<div class="burst" aria-hidden="true">' + burst + '</div>' +
           '<span class="px" style="font-size:11px;line-height:1.6;color:' + v.cur.gemColor + '">' + esc(v.gainLabel) + '</span>' +
@@ -356,6 +416,27 @@
       '<div class="foot">' + foot + '</div></div>';
   }
 
+  function reportPanel(rep, tries) {
+    if (rep.fatal) {
+      return '<section class="fail" role="alert"><span class="px fail-title">✗ YOUR CODE DIDN’T RUN</span><p>' + esc(rep.fatal) + '</p>' + logsBlock(rep.logs) + '</section>';
+    }
+    var f = rep.fail || {};
+    return '<section class="fail" role="alert">' +
+      '<span class="px fail-title">✗ ' + rep.passed + ' OF ' + rep.total + ' TESTS PASSED</span>' +
+      '<span class="tag">Failed test ' + ((f.index || 0) + 1) + (tries > 1 ? ' · try ' + tries : '') + '</span>' +
+      (f.error ? '<p>' + esc(f.error) + '</p>' : '') +
+      (f.input ? '<div class="io"><span class="px">INPUT</span><pre>' + esc(f.input) + '</pre></div>' : '') +
+      (f.expected ? '<div class="io"><span class="px">EXPECTED</span><pre>' + esc(f.expected) + '</pre></div>' : '') +
+      '<div class="io"><span class="px">GOT</span><pre>' + esc(f.got) + '</pre></div>' +
+      logsBlock(rep.logs) +
+      '<span class="tag">Fix it and run again — your quest gems are safe, the boss gems wait for a full clear.</span>' +
+    '</section>';
+  }
+  function logsBlock(logs) {
+    if (!logs || !logs.length) return '';
+    return '<div class="io"><span class="px">CONSOLE</span><pre>' + esc(logs.join('\n')) + '</pre></div>';
+  }
+
   function familyColor(fam) { return (GEMS[fam] && GEMS[fam].color) || '#B9B4D6'; }
 
   function logScreen() {
@@ -374,7 +455,8 @@
           '<span class="dot" style="background:' + familyColor(a.family) + '"></span>' +
           '<span class="attempt-main"><span class="attempt-title">' + esc(a.title) + '</span>' +
           '<span class="tag">' + esc(when(a.createdAt)) + ' · ' + esc(a.difficulty) + '</span></span>' +
-          '<span class="attempt-tag ' + (a.firstClear ? 'first' : '') + '">' + (a.firstClear ? '+' + a.gemsEarned : 'REPLAY') + '</span>' +
+          '<span class="attempt-tag ' + (a.passed === false ? 'failed' : a.firstClear ? 'first' : '') + '">' +
+            (a.passed === false ? 'FAIL ' + (a.testsTotal ? a.testsPassed + '/' + a.testsTotal : '') : a.firstClear ? '+' + a.gemsEarned : 'REPLAY') + '</span>' +
           '</button>';
       }).join('') : '<p class="tag">No attempts yet. Clear a quest and it will show up here.</p>';
       body =
@@ -412,8 +494,10 @@
         var q = problem && problem.steps[i] ? problem.steps[i].q : 'Question ' + (i + 1);
         return '<div class="note"><span class="px muted" style="font-size:8px">QUEST ' + (i + 1) + '</span><p class="muted">' + esc(q) + '</p><p>' + esc(ans || '—') + '</p></div>';
       }).join('');
-      body = '<div class="stats"><div class="stat"><span class="px">RESULT</span><span>' + (a.firstClear ? '+' + a.gemsEarned + ' gems' : 'Replay') + '</span></div>' +
+      var result = a.passed === false ? 'Failed' + (a.testsTotal ? ' ' + a.testsPassed + '/' + a.testsTotal : '') : a.firstClear ? '+' + a.gemsEarned + ' gems' : 'Passed';
+      body = '<div class="stats"><div class="stat"><span class="px">RESULT</span><span>' + esc(result) + '</span></div>' +
         '<div class="stat"><span class="px">LEVEL</span><span>' + esc(a.difficulty) + '</span></div></div>' +
+        (a.failure ? '<section class="fail"><span class="px fail-title">WHAT FAILED</span><p>' + esc(a.failure) + '</p></section>' : '') +
         '<section class="notes"><h2>YOUR ANSWERS</h2>' + qa + '</section>' +
         '<section class="notes"><h2>YOUR CODE</h2><pre class="example code-view">' + esc(a.code || '(empty)') + '</pre></section>';
     }
@@ -422,6 +506,7 @@
 
   // ---------------- render loop ----------------
   var lastScreen = null;
+  var shownReport = null;
   function screenHtml() {
     if (ui.view === 'boot') return { html: bootScreen(), key: 'boot' };
     if (ui.view === 'auth') return { html: authScreen(), key: 'auth' };
@@ -443,6 +528,13 @@
       else if (out.key === lastScreen) el.scrollTop = scrollMemory.walk || 0;
       else el.scrollTop = 0;
     }
+    // After a failed boss run, bring the failing test into view (it sits below the editor).
+    var rep = game.state && game.state.report;
+    if (rep && rep !== shownReport) {
+      var panel = app.querySelector('.fail');
+      if (panel) { panel.scrollIntoView({ block: 'start' }); focused = null; }
+    }
+    shownReport = rep || null;
     if (focused) {
       var f = app.querySelector('[data-field="' + focused + '"]');
       if (f) { f.focus(); f.setSelectionRange(f.value.length, f.value.length); }
@@ -450,6 +542,7 @@
     lastScreen = out.key;
   }
   game.onChange = function () {
+    runBossIfNeeded();
     recordAttemptIfNew();
     render();
     persist();

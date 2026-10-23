@@ -18,8 +18,15 @@ app.use((_req, res, next) => {
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-      "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'",
+      "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'",
   );
+  next();
+});
+
+// The test runner worker needs eval to run the user's code, and gets no network at all.
+app.use('/runner.js', (_req, res, next) => {
+  res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self' 'unsafe-eval'");
+  res.setHeader('Cache-Control', 'no-cache');
   next();
 });
 

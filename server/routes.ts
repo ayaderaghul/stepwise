@@ -1,6 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { Router, type Response } from 'express';
 import { pool } from './db.js';
+import { transpile } from './transpile.js';
 import {
   createSession, destroySession, hashPassword, requireUser, tooManyAttempts, verifyPassword, type AuthedRequest,
 } from './auth.js';
@@ -88,7 +89,7 @@ api.get('/progress', requireUser, wrap(async (req, res) => {
 api.put('/progress', requireUser, wrap(async (req, res) => {
   const state = req.body?.state;
   if (!state || typeof state !== 'object' || Array.isArray(state)) return bad(res, 'Expected { state: {...} }.');
-  const allowed = ['solved', 'gems', 'shards', 'saved', 'fresh', 'filter'];
+  const allowed = ['solved', 'gems', 'shards', 'saved', 'fresh', 'questDone'];
   const clean: Record<string, unknown> = {};
   for (const key of allowed) if (key in state) clean[key] = state[key];
   await pool.query(
@@ -98,6 +99,15 @@ api.put('/progress', requireUser, wrap(async (req, res) => {
   );
   res.json({ ok: true });
 }));
+
+// ---------------- code: strip TypeScript types (the browser runs the tests) ----------------
+
+api.post('/transpile', requireUser, (req: AuthedRequest, res) => {
+  const code = typeof req.body?.code === 'string' ? req.body.code : null;
+  if (code === null) return bad(res, 'Expected { code }.');
+  if (code.length > 50_000) return bad(res, 'That code is too long (50,000 characters max).', 413);
+  res.json(transpile(code));
+});
 
 // ---------------- attempts ----------------
 
@@ -109,11 +119,16 @@ api.post('/attempts', requireUser, wrap(async (req, res) => {
   const answers = Array.isArray(b.answers) ? b.answers.slice(0, 10).map((a: unknown) => String(a ?? '').slice(0, 5000)) : null;
   const code = typeof b.code === 'string' ? b.code.slice(0, 50_000) : '';
   const gems = Number.isInteger(b.gemsEarned) ? Math.max(0, Math.min(20, b.gemsEarned)) : 0;
+  const passed = b.passed !== false;
+  const count = (v: unknown) => (Number.isInteger(v) && (v as number) >= 0 && (v as number) <= 1000 ? (v as number) : null);
+  const failure = typeof b.failure === 'string' ? b.failure.slice(0, 2000) : null;
   if (!title || !family || !DIFFICULTIES.has(b.difficulty) || !answers) return bad(res, 'Missing or invalid attempt fields.');
   const { rows } = await pool.query(
-    `INSERT INTO attempts (user_id, problem_title, problem_rank, family, difficulty, answers, code, first_clear, gems_earned)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id, created_at`,
-    [req.user!.id, title, rank, family, b.difficulty, JSON.stringify(answers), code, b.firstClear === true, gems],
+    `INSERT INTO attempts (user_id, problem_title, problem_rank, family, difficulty, answers, code, first_clear, gems_earned,
+                           passed, tests_passed, tests_total, failure)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id, created_at`,
+    [req.user!.id, title, rank, family, b.difficulty, JSON.stringify(answers), code, passed && b.firstClear === true, passed ? gems : 0,
+      passed, count(b.testsPassed), count(b.testsTotal), failure],
   );
   res.status(201).json(rows[0]);
 }));
@@ -123,7 +138,8 @@ api.get('/attempts', requireUser, wrap(async (req, res) => {
   const before = Number(req.query.before) || null;
   const { rows } = await pool.query(
     `SELECT id, problem_title AS title, problem_rank AS rank, family, difficulty, first_clear AS "firstClear",
-            gems_earned AS "gemsEarned", created_at AS "createdAt"
+            gems_earned AS "gemsEarned", passed, tests_passed AS "testsPassed", tests_total AS "testsTotal",
+            created_at AS "createdAt"
      FROM attempts WHERE user_id = $1 AND ($2::bigint IS NULL OR id < $2)
      ORDER BY id DESC LIMIT $3`,
     [req.user!.id, before, limit],
@@ -136,7 +152,8 @@ api.get('/attempts/:id', requireUser, wrap(async (req, res) => {
   if (!Number.isInteger(id)) return bad(res, 'Bad id.');
   const { rows } = await pool.query(
     `SELECT id, problem_title AS title, problem_rank AS rank, family, difficulty, answers, code,
-            first_clear AS "firstClear", gems_earned AS "gemsEarned", created_at AS "createdAt"
+            first_clear AS "firstClear", gems_earned AS "gemsEarned", passed, tests_passed AS "testsPassed",
+            tests_total AS "testsTotal", failure, created_at AS "createdAt"
      FROM attempts WHERE id = $1 AND user_id = $2`,
     [id, req.user!.id],
   );
