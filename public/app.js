@@ -248,6 +248,7 @@
     bulb: '<svg width="12" height="18" viewBox="0 0 4 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="0" width="2" height="1" fill="#FFB347"/><rect x="0" y="1" width="4" height="2" fill="#FFB347"/><rect x="1" y="3" width="2" height="1" fill="#FFB347"/><rect x="1" y="5" width="2" height="1" fill="#FFB347"/></svg>',
     feed: '<svg width="18" height="18" viewBox="0 0 6 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="6" height="2" fill="currentColor"/><rect x="0" y="3" width="6" height="3" fill="currentColor"/></svg>',
     log: '<svg width="18" height="18" viewBox="0 0 6 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="4" width="1" height="2" fill="currentColor"/><rect x="2" y="2" width="1" height="4" fill="currentColor"/><rect x="4" y="0" width="1" height="6" fill="currentColor"/></svg>',
+    gems: '<svg width="21" height="15" viewBox="0 0 7 5" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="0" width="5" height="1" fill="currentColor"/><rect x="0" y="1" width="7" height="2" fill="currentColor"/><rect x="2" y="3" width="3" height="1" fill="currentColor"/><rect x="3" y="4" width="1" height="1" fill="currentColor"/></svg>',
     flame: '<svg width="18" height="21" viewBox="0 0 6 7" shape-rendering="crispEdges" aria-hidden="true"><rect x="2" y="0" width="1" height="1" fill="#FFB347"/><rect x="2" y="1" width="2" height="1" fill="#FFB347"/><rect x="1" y="2" width="3" height="1" fill="#FFB347"/><rect x="1" y="3" width="4" height="1" fill="#FF7A52"/><rect x="0" y="4" width="6" height="2" fill="#FF7A52"/><rect x="2" y="4" width="2" height="2" fill="#FFD23F"/><rect x="1" y="6" width="4" height="1" fill="#E2552E"/></svg>'
   };
   function bookmark(fill) {
@@ -265,6 +266,7 @@
     return '<nav class="nav" aria-label="Main">' +
       '<button class="' + (feedOn ? 'on' : '') + '" data-act="' + act(function () { ui.view = 'game'; if (game.state.filter === 'saved') game.setState({ filter: 'all' }); else render(); }) + '">' + ICON.feed + 'FEED</button>' +
       '<button class="' + (savedOn ? 'on' : '') + '" data-act="' + act(function () { ui.view = 'game'; game.setState({ filter: 'saved' }); }) + '">' + bookmark('currentColor') + 'SAVED</button>' +
+      '<button class="' + (active === 'codex' ? 'on' : '') + '" data-act="' + act(openCodex) + '">' + ICON.gems + 'GEMS</button>' +
       '<button class="' + (active === 'log' ? 'on' : '') + '" data-act="' + act(openLog) + '">' + ICON.log + 'LOG</button>' +
       '</nav>';
   }
@@ -310,8 +312,8 @@
     return '<div class="screen">' +
       '<header class="feed-head">' +
         '<div class="brand-row"><div style="display:flex;flex-direction:column;gap:6px"><span class="brand">STEPWISE</span><span class="tag">Think first. Code second.</span></div>' +
-        '<span class="px muted" style="font-size:9px;padding-bottom:4px">TOTAL ' + v.totalGems + '</span></div>' +
-        '<div class="vault" aria-label="Gem vault">' + vault + '</div>' +
+        '<button class="codex-link" data-act="' + act(openCodex) + '">TOTAL ' + v.totalGems + ' · CODEX ▶</button></div>' +
+        '<button class="vault" aria-label="Gem vault — open the gem codex" data-act="' + act(openCodex) + '">' + vault + '</button>' +
         '<div class="chips" aria-label="Filter by gem family">' + chips + '</div>' +
         '<span class="tag">' + esc(v.feedCount) + '</span>' +
       '</header>' +
@@ -438,6 +440,57 @@
     return '<div class="io"><span class="px">CONSOLE</span><pre>' + esc(logs.join('\n')) + '</pre></div>';
   }
 
+  // ---------------- gem codex ----------------
+  var RARE_LORE = {
+    'Trie': 'Branches like a trie. Shifts teal → violet.',
+    'Segment tree': 'A tiny segment tree; light sweeps its levels.'
+  };
+  function openCodex() { ui.view = 'codex'; render(); }
+  function showFamily(fam) { ui.view = 'game'; game.setState({ screen: 'feed', filter: fam }); }
+  function codexScreen() {
+    var s = game.state || {};
+    var gems = s.gems || {}, shards = s.shards || {};
+    var quests = function (fam) { return PROBLEMS.filter(function (p) { return p.family === fam; }); };
+    var cleared = function (fam) { return PROBLEMS.filter(function (p, i) { return p.family === fam && s.solved && s.solved[i]; }).length; };
+    var total = GEM_ORDER.reduce(function (n, f) { return n + (gems[f] || 0); }, 0);
+    var found = GEM_ORDER.filter(function (f) { return (gems[f] || 0) > 0; }).length;
+
+    var rare = GEM_ORDER.filter(function (f) { return GEMS[f].rare; }).map(function (f) {
+      var g = GEMS[f], have = gems[f] || 0, big = gemPixels(f, g.shape[0].length > 8 ? 8 : 9);
+      var q = quests(f)[0];
+      return '<button class="rare-card' + (have ? '' : ' unfound') + '" data-act="' + act(function () { showFamily(f); }) + '" aria-label="' + esc(g.name + ', ' + f + ': ' + have + ' found. Show the quest.') + '">' +
+        '<div class="rare-art"><div class="bob">' + gem(big) + '<span class="twinkle tw2"></span></div></div>' +
+        '<div class="rare-text"><span class="px" style="font-size:11px;color:' + g.color + '">' + esc(g.name.toUpperCase()) + '</span>' +
+          '<span class="t">' + esc(f) + ' · ' + (have ? have + ' found' : 'not found') + '</span>' +
+          '<span class="tag">' + esc(RARE_LORE[f] || '') + '</span>' +
+          (q ? '<span class="tag" style="color:#FFD23F">From: ' + esc(q.title.replace(/ \(.*\)$/, '')) + '</span>' : '') +
+        '</div></button>';
+    }).join('');
+
+    var common = GEM_ORDER.filter(function (f) { return !GEMS[f].rare; }).map(function (f) {
+      var g = GEMS[f], have = gems[f] || 0, qs = quests(f);
+      return '<button class="codex-cell' + (have ? '' : ' unfound') + '" data-act="' + act(function () { showFamily(f); }) + '" aria-label="' + esc(g.name + ', ' + f + ': ' + have + ' gems, ' + cleared(f) + ' of ' + qs.length + ' quests cleared. Show these quests.') + '">' +
+        '<div class="codex-gem">' + gem(gemPixels(f, 4)) + '</div>' +
+        '<span class="codex-name" style="color:' + g.color + '">' + esc(g.name) + '</span>' +
+        '<span class="codex-fam">' + esc(SHORT[f].toLowerCase()) + '</span>' +
+        '<span class="codex-count">' + have + (shards[f] ? ' <span style="color:' + g.color + '">◆' + shards[f] + '</span>' : '') + '</span>' +
+        '<span class="codex-fam">' + cleared(f) + '/' + qs.length + ' cleared</span>' +
+      '</button>';
+    }).join('');
+
+    return '<div class="screen">' +
+      '<header class="feed-head"><div class="brand-row"><span class="brand">GEM CODEX</span><span class="tag">' + total + ' gems · ' + found + '/' + GEM_ORDER.length + ' kinds</span></div>' +
+        '<span class="tag">One gem per problem family. Tap a gem to see its quests.</span></header>' +
+      '<main class="scroll" data-scroll="codex"><div class="body">' +
+        '<section class="panel"><h2 class="px small">COMMON</h2><div class="codex-grid">' + common + '</div></section>' +
+        '<section class="panel"><h2 class="px small" style="color:#FFD23F">★ RARE</h2>' + rare + '</section>' +
+        '<section class="side"><span class="px muted" style="font-size:8px;line-height:1.6">HOW GEMS WORK</span>' +
+          '<p>Finish a problem’s quests for half its gems; beat the boss (all tests pass) for the rest. Easy 3, Medium 5, Hard 8. ' +
+          'Secondary topics drop shards ◆ — five fuse into a gem. Rare gems drop only from the boss.</p></section>' +
+      '</div></main>' + nav('codex') +
+    '</div>';
+  }
+
   function familyColor(fam) { return (GEMS[fam] && GEMS[fam].color) || '#B9B4D6'; }
 
   function logScreen() {
@@ -512,6 +565,7 @@
     if (ui.view === 'boot') return { html: bootScreen(), key: 'boot' };
     if (ui.view === 'auth') return { html: authScreen(), key: 'auth' };
     if (ui.view === 'log') return { html: logScreen(), key: 'log' };
+    if (ui.view === 'codex') return { html: codexScreen(), key: 'codex' };
     if (ui.view === 'attempt') return { html: attemptScreen(), key: 'attempt' };
     var v = game.renderVals();
     return { html: v.isFeed ? feed(v) : walk(v), key: v.isFeed ? 'feed' : 'walk:' + (v.isStep ? 's' : v.isCode ? 'c' : 'r') };

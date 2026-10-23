@@ -202,3 +202,27 @@ input:focus { outline: 3px dashed var(--accent); outline-offset: 3px; }
 .io .px { font-size: 8px; color: var(--muted); }
 .io pre { margin: 0; padding: 8px 10px; background: var(--deep); border: 2px solid var(--line); font-family: var(--body); font-size: 18px; line-height: 1.15; white-space: pre-wrap; word-break: break-word; color: var(--ink); }
 .attempt-tag.failed { color: #FF8A8A; }
+
+/* ---- gem codex ---- */
+.nav { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.codex-link { background: none; border: none; padding: 0 0 4px; font-family: var(--pixel); font-size: 9px; color: var(--muted); cursor: pointer; min-height: 32px; }
+button.vault { width: 100%; text-align: left; cursor: pointer; color: inherit; }
+.rare-card { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; background: #2A2150; border: 3px solid var(--accent); box-shadow: 5px 5px 0 var(--shadow); text-align: left; cursor: pointer; color: inherit; }
+.rare-art { flex: 0 0 96px; height: 70px; display: flex; align-items: center; justify-content: center; }
+.rare-art .bob { position: relative; }
+.rare-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.rare-text .tag { font-size: 17px; line-height: 1.1; }
+.rare-text .t { font-size: 19px; }
+.codex-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.codex-cell { display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 4px; background: var(--panel); border: 3px solid var(--line); cursor: pointer; color: inherit; text-align: center; }
+.codex-gem { height: 30px; display: flex; align-items: center; }
+.codex-name { font-size: 19px; line-height: 1; }
+.codex-fam { font-size: 15px; line-height: 1; color: var(--muted); }
+.codex-count { font-family: var(--pixel); font-size: 11px; }
+.unfound .gem { filter: grayscale(.85) brightness(.7); }
+.unfound .codex-name, .unfound .rare-text .px { opacity: .7; }
+@keyframes bob { 0%, 100% { transform: translateY(0) } 50% { transform: translateY(-4px) } }
+.bob { animation: bob 1.6s steps(2) infinite; }
+.tw2 { top: auto; right: auto; bottom: 2px; left: -14px; animation-delay: .6s; }
+@media (prefers-reduced-motion: reduce) { .bob { animation: none; } }
+.unfound .rare-art { filter: grayscale(.85) brightness(.7); }
