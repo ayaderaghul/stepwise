@@ -84,7 +84,7 @@
         body: {
           title: p.title, rank: p.rank || null, family: p.family, difficulty: p.diff,
           answers: (s.answers || []).map(function (a) { return a || ''; }),
-          code: s.code || '', firstClear: passed && (s.gain || 0) > 0, gemsEarned: passed ? (s.gain || 0) : 0,
+          code: s.code || '', firstClear: passed && (s.gain || 0) > 0, gemsEarned: passed ? (s.gain || 0) + (s.questShare || 0) : 0,
           passed: passed, testsPassed: rep.passed, testsTotal: rep.total, failure: passed ? null : failureText(rep)
         }
       }).then(function (r) {
@@ -396,6 +396,7 @@
           (v.rareDrop ? '<span class="rare-drop blink">★ RARE DROP ★</span>' : '') +
           '<div class="burst" aria-hidden="true">' + burst + '</div>' +
           '<span class="px" style="font-size:11px;line-height:1.6;color:' + v.cur.gemColor + '">' + esc(v.gainLabel) + '</span>' +
+          (v.hasSplit ? '<span style="font-size:19px;color:#E2DEF5">' + esc(v.splitLine) + '</span>' : '') +
           '<span class="muted" style="font-size:19px">' + esc(v.cur.gemSummary) + '</span>' +
           (v.hasShardGain ? '<span style="font-size:19px;color:#E2DEF5">◆ +1 shard each: ' + esc(v.shardLine) + '</span>' : '') +
           (v.hasFused ? '<span class="px blink" style="font-size:9px;line-height:1.6;color:#FFD23F">5 SHARDS FUSED → +1 ' + esc(v.fusedLine) + '</span>' : '') +

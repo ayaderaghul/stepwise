@@ -1007,11 +1007,11 @@ function newlyUnlocked(oldGems, oldSolved, gems, solved, fresh) {
 
 class Component extends DCLogic {
   st() {
-    return Object.assign({ screen: 'feed', pid: 0, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', saved: {}, solved: {}, gems: {}, gain: 0, reviewed: false, fresh: {}, unlocks: [], filter: 'all', shards: {}, shardGain: [], fused: [], questDone: {}, questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0 }, this.state || {});
+    return Object.assign({ screen: 'feed', pid: 0, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', saved: {}, solved: {}, gems: {}, gain: 0, reviewed: false, fresh: {}, unlocks: [], filter: 'all', shards: {}, shardGain: [], fused: [], questDone: {}, questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0 }, this.state || {});
   }
   start(pid) {
     var fresh = Object.assign({}, this.st().fresh); delete fresh[pid];
-    this.setState({ screen: 'walk', pid: pid, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', reviewed: false, gain: 0, unlocks: [], fresh: fresh, shardGain: [], fused: [], questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0 });
+    this.setState({ screen: 'walk', pid: pid, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', reviewed: false, gain: 0, unlocks: [], fresh: fresh, shardGain: [], fused: [], questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0 });
   }
   // Called by the page after the tests ran. report: { passed, total, ms, fail, fatal, logs }
   bossResult(report) {
@@ -1032,7 +1032,9 @@ class Component extends DCLogic {
     });
     var fresh = Object.assign({}, s.fresh);
     var unlocks = newlyUnlocked(s.gems, s.solved, gems, solved, fresh);
-    this.setState({ judging: false, report: report, reviewed: true, solved: solved, gems: gems, gain: g, unlocks: unlocks, fresh: fresh, shards: shards, shardGain: shardGain, fused: fused });
+    // questShare: what the quests already paid for this problem, so the clear screen can show the full reward.
+    var questShare = first && s.questDone[s.pid] ? questPartFor(p) : 0;
+    this.setState({ judging: false, report: report, reviewed: true, solved: solved, gems: gems, gain: g, questShare: questShare, unlocks: unlocks, fresh: fresh, shards: shards, shardGain: shardGain, fused: fused });
   }
   renderVals() {
     var s = this.st();
@@ -1117,7 +1119,8 @@ class Component extends DCLogic {
     var phaseLabel = inReview ? 'Results' : (inCode ? 'Boss stage' : ('Thinking · ' + p.family + (p.rank ? ' · Taro #' + p.rank : ' · bonus')));
     var noDraft = !s.draft || !s.draft.trim();
     var burst = [];
-    for (var b = 0; b < Math.max(s.gain, 0); b++) burst.push(gemPixels(p.family, pg.rare ? 7 : 5));
+    var earned = (s.gain || 0) + (s.questShare || 0); // total for this problem: quests + boss
+    for (var b = 0; b < Math.max(earned, 0); b++) burst.push(gemPixels(p.family, pg.rare ? 7 : 5));
 
     return {
       accent: accent,
@@ -1177,7 +1180,9 @@ class Component extends DCLogic {
       report: s.report,
       bossTries: s.bossTries,
       burst: burst,
-      gainLabel: s.gain > 0 ? '+' + s.gain + ' ' + (s.gain === 1 ? pg.name : pg.plural).toUpperCase() : 'ALREADY CLEARED · NO NEW GEMS',
+      gainLabel: earned > 0 ? '+' + earned + ' ' + (earned === 1 ? pg.name : pg.plural).toUpperCase() + ' IN TOTAL' : 'ALREADY CLEARED · NO NEW GEMS',
+      hasSplit: s.questShare > 0 && s.gain > 0,
+      splitLine: s.questShare + ' for the quests (earned earlier) + ' + s.gain + ' for beating the boss',
       bossTriesLine: s.bossTries > 0 ? 'Cleared after ' + (s.bossTries + 1) + ' tries' : 'Cleared on the first try',
       rareDrop: !!pg.rare && s.gain > 0,
       rv: {
