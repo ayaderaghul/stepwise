@@ -13,7 +13,7 @@ const wrap = (fn: (req: AuthedRequest, res: Response) => Promise<void>) =>
 
 async function getJson(url: string): Promise<unknown> {
   const r = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'stepwise-app' } });
-  if (!r.ok) throw new Error('upstream ' + r.status);
+  if (!r.ok) throw new Error('upstream ' + r.status + ' ' + (await r.text()).slice(0, 200));
   return r.json();
 }
 
@@ -41,7 +41,8 @@ world.get('/weather', requireUser, wrap(async (req, res) => {
     weatherCache.set(key, { at: Date.now(), data });
     if (weatherCache.size > 2000) weatherCache.delete(weatherCache.keys().next().value as string);
     res.json(data);
-  } catch {
+  } catch (err) {
+    console.error('weather lookup failed:', (err as Error).message, (err as { cause?: unknown }).cause ?? '');
     res.status(502).json({ error: 'The weather spirits are quiet right now. Try again later.' });
   }
 }));
@@ -59,7 +60,8 @@ world.get('/geocode', requireUser, wrap(async (req, res) => {
         lat: Math.round(r.latitude * 1000) / 1000, lon: Math.round(r.longitude * 1000) / 1000
       }))
     });
-  } catch {
+  } catch (err) {
+    console.error('geocode failed:', (err as Error).message, (err as { cause?: unknown }).cause ?? '');
     res.status(502).json({ error: 'Couldn’t search for places right now.' });
   }
 }));
@@ -110,3 +112,10 @@ world.get('/leaderboard', requireUser, wrap(async (req, res) => {
   board.sort((a, b) => (period === 'week' ? b.week - a.week || b.gold - a.gold : b.gold - a.gold || b.week - a.week) || a.username.localeCompare(b.username));
   res.json({ period, explorers: board.slice(0, 100).map((e, i) => ({ place: i + 1, ...e })) });
 }));
+
+// One probe at start-up, so the logs show whether the weather service is reachable from this host.
+export function probeWeather() {
+  getJson(`${FORECAST}?latitude=41.9&longitude=12.5&current=temperature_2m,weather_code,is_day&timezone=auto`)
+    .then((j) => console.log('weather probe ok:', JSON.stringify((j as { current?: unknown }).current)))
+    .catch((err) => console.error('weather probe failed:', (err as Error).message, (err as { cause?: unknown }).cause ?? ''));
+}
