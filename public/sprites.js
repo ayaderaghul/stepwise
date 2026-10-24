@@ -36,7 +36,61 @@ var SPRITES = {
     '..f..', '.fFf.', '.FrF.', 'fFrFf', '.FFF.', '.www.', '..w..', '..w..', '..w..', '.www.'] },
   runestone: { c: { S: '#B8B5A2', s: '#8C8A7A', r: '#6FE3D2', d: '#4E4C42' }, s: [
     '..SSSS..', '.SssssS.', 'SssrsssS', 'SssrrssS', 'SssrsrsS', 'SssrrssS', 'SssrsrsS', 'SssrssrS',
-    'SssssssS', 'dSSSSSSd', 'dddddddd'] }
+    'SssssssS', 'dSSSSSSd', 'dddddddd'] },
+  // ---- atlas: temples by difficulty, curiosities, weather, coins ----
+  hut: { c: { P: '#8A6A3A', p: '#C8A96A', w: '#8C8A7A', d: '#1A120A', m: '#3E8E4E' }, s: [
+    '.....PP.....', '....PppP....', '...PppppP...', '..PppppppP..', '.PppppppppP.', '..wwwwwwww..',
+    '..wwwddwww..', '..wmwddwmw..', '..wwwddwww..', '.mmmmmmmmmm.'] },
+  shrine: { c: { g: '#F2C14E', S: '#B8B5A2', s: '#8C8A7A', d: '#2A2A24', m: '#3E8E4E' }, s: [
+    '.......gg.......', '......SSSS......', '.....SssssS.....', '....SSSSSSSS....', '....sdsddsds....', '...SSSSSSSSSS...',
+    '...ssssddssss...', '..SSSSSddSSSSS..', '..sssssddsssss..', '.SSSmSSddSSmSSS.', '.ssssssddssssss.', 'SSSSSSSddSSSSSSS',
+    'mssssssddssssssm', 'mmmmmmmmmmmmmmmm'] },
+  ziggurat: { c: { y: '#F2C14E', Y: '#FFE08A', S: '#B8B5A2', s: '#8C8A7A', d: '#2A2A24', e: '#6FE3D2', f: '#F2C14E', F: '#F28C28', w: '#8A5A33', m: '#3E8E4E', v: '#2E7A35' }, s: [
+    '.........yy.........', '........yYYy........', '........SeeS........', '.......SSSSSS.......', '...f...sdssds...f...',
+    '...F..SSSSSSSS..F...', '...w..sseesees..w...', '...w.SSSSSSSSSS.w...', '...w.ssssddssss.w...', '...SSSSSSddSSSSSS...',
+    '...vsssssddsssssv...', '..SSSSSSSddSSSSSSS..', '..vsyssssddssssysv..', '.SSSSSSSSddSSSSSSSS.', 'mssssssssddssssssssm',
+    'mmmmmmmmmmmmmmmmmmmm'] },
+  spire: { c: { c: '#2EC4A0', C: '#B8FFE8', w: '#FFFFFF', S: '#B8B5A2', s: '#8C8A7A', d: '#2A2A24', m: '#3E8E4E' }, s: [
+    '......cc......', '.....cCCc.....', '.....cCCc.....', '....cCCCCc....', '....cCwCCc....', '...cCCCCCCc...',
+    '...cCCCCCCc...', '..SSSSSSSSSS..', '..ssssddssss..', '.SSSSSddSSSSS.', '.sssssddsssss.', 'SSSSSSddSSSSSS',
+    'msssssddsssssm', 'mmmmmmmmmmmmmm'] },
+  wolf: { c: { g: '#8C93A6', G: '#C9CFDB', d: '#4A5266', e: '#F2C14E', n: '#111111' }, s: [
+    '........gg..', '.......gGgg.', '......gGeggn', '.....gGGggg.', '....ggGGg...', '...gggGGg...',
+    '..ggggGGg...', '.gggggggg...', 'gg.ggggggg..', 'dd.dd..dd...'] },
+  moon: { c: { m: '#F2EBD3', M: '#C9CFDB' }, s: ['..mmmm..', '.mmMmmm.', 'mmmmmMmm', 'mMmmmmmm', 'mmmmMmmm', 'mmMmmmmm', '.mmmmmm.', '..mmmm..'] },
+  totem: { c: { g: '#3E8E4E', w: '#8A5A33', y: '#F2C14E', r: '#D9412B', m: '#2E7A35' }, s: [
+    '.gggggg.', 'gwwwwwwg', 'wyywwyyw', 'wwwwwwww', 'wwrrrrww', '.wwwwww.', 'gwwwwwwg', 'wywwwwyw', 'wwwrrwww',
+    '.wwwwww.', '..wwww..', '..mmmm..'] },
+  mist: { c: { a: '#A9C2A6', A: '#DDE8D8' }, s: ['...AAA....AA..', '.AAaaaA..AaaA.', 'AaaaaaaAAaaaaA', '.aaaaaaaaaaaa.', '...aa..aaa....'] },
+  flag: { c: { w: '#8A5A33', r: '#D9412B' }, s: ['wrrrr.', 'wrrrrr', 'wrrrr.', 'w.....', 'w.....', 'w.....', 'w.....', 'w.....'] },
+  ember: { c: { k: '#3A2A24', o: '#F28C28' }, s: ['.kkk.', 'kkokk', 'kokkk', '.kkk.'] },
+  sun: { c: { y: '#F2C14E', Y: '#FFE08A' }, s: ['....y....', '.y..y..y.', '..yYYYy..', '..YYYYY..', 'yyYYYYYyy', '..YYYYY..', '..yYYYy..', '.y..y..y.', '....y....'] },
+  rain: { c: { c: '#A9C2C9', C: '#DDE8EE', r: '#6FA8E3' }, s: ['...CCC....', '.CCcccCC..', 'CcccccccC.', '.cccccccc.', '..r..r..r.', '.r..r..r..', 'r..r..r...'] },
+  storm: { c: { c: '#6E7480', C: '#A9AEB8', y: '#F2C14E' }, s: ['...CCC....', '.CCcccCC..', 'CcccccccC.', '.cccccccc.', '....yy....', '...yy.....', '....y.....'] },
+  coin: { c: { y: '#F2C14E', Y: '#FFE08A', o: '#B8860B' }, s: ['.yyyy.', 'yYYyyo', 'yYyyyo', 'yyyyyo', 'yyyyoo', '.oooo.'] },
+  // ---- explorers by rank (gear gets nerdier with coins) ----
+  wanderer: { c: { h: '#4A2A12', s: '#E8B48A', e: '#1A120A', t: '#8C8A7A', p: '#4A3B2A', b: '#2A1D10' }, s: [
+    '....hhhh....', '...hhhhhh...', '...hssssh...', '...sesses...', '....ssss....', '...tttttt...', '..tttttttt..', '..stttttts..',
+    '..stttttts..', '..s.tttt.s..', '....pppp....', '....pppp....', '....p..p....', '....p..p....', '...bb..bb...', '............'] },
+  scout: { c: { g: '#6B8E3A', h: '#4A2A12', s: '#E8B48A', e: '#1A120A', t: '#7B9E5A', k: '#8A5A33', p: '#4A3B2A', b: '#2A1D10' }, s: [
+    '...gggggg...', '..gggggggg..', '...hssssh...', '...sesses...', '....ssss....', '...tttttt...', 'kktttttttt..', 'kkstttttts..',
+    'kkstttttts..', '..s.tttt.s..', '....pppp....', '....pppp....', '....p..p....', '....p..p....', '...bb..bb...', '............'] },
+  pathfinder: { c: { w: '#E8DCC0', W: '#8A5A33', h: '#4A2A12', s: '#E8B48A', e: '#1A120A', t: '#C8A96A', c: '#F2C14E', p: '#4A3B2A', b: '#2A1D10' }, s: [
+    '....wwww....', '..wwwWWwww..', '...hssssh...', '...sesses...', '....ssss....', '...ttcctt...', '..tttttttt..', '..stttttts..',
+    '..stttttts..', '..s.tttt.s..', '....pppp....', '....pppp....', '....p..p....', '....p..p....', '...bb..bb...', '............'] },
+  cartographer: { c: { h: '#4A2A12', k: '#2B2F3A', G: '#6FE3D2', s: '#E8B48A', e: '#1A120A', t: '#3D6E9E', m: '#F2EBD3', p: '#2A2F45', b: '#2A1D10' }, s: [
+    '....hhhh....', '...kGGkGGk..', '...hssssh...', '...sesses...', '....ssss....', '...tttttt...', '..tttttttt..', '..ststtttsmm',
+    '..ststtttsmm', '..s.tttt.sm.', '....pppp....', '....pppp....', '....p..p....', '....p..p....', '...bb..bb...', '............'] },
+  archivist: { c: { h: '#4A2A12', q: '#2B2F3A', s: '#E8B48A', e: '#1A120A', t: '#6A35C2', L: '#6FE3D2', l: '#B8B5A2', b: '#2A1D10' }, s: [
+    '....hhhh....', '..qhhhhhhq..', '..qhsssshq..', '...sesses...', '....ssss....', '...tttttt...', '..tttttttt..', '..sLLLLLLs..',
+    '..stllllts..', '..tttttttt..', '..tttttttt..', '..tttttttt..', '..tttttttt..', '...tttttt...', '...bb..bb...', '............'] },
+  runesage: { c: { r: '#6FE3D2', h: '#DDE8D8', s: '#E8B48A', e: '#1A120A', t: '#13705C', y: '#F2C14E', d: '#F2C14E', D: '#F28C28', b: '#2A1D10' }, s: [
+    '.r..r..r..r.', '...hhhhhh...', '...hssssh...', '...sesses...', '...hhsshh...', '...tyyyyt...', '..tttttttt..', '..sttttttsdd',
+    '..stttttsDdd', '..tttyyttt..', '..tttttttt..', '..tttttttt..', '..tttttttt..', '...tttttt...', '...bb..bb...', '............'] },
+  monarch: { c: { y: '#F2C14E', R: '#FF4D6D', h: '#4A2A12', s: '#E8B48A', e: '#1A120A', z: '#3D8BFF', Z: '#C7E2FF', w: '#8A5A33', c: '#A3162F', t: '#F2C14E', p: '#6A35C2' }, s: [
+    '...y.yy.y...', '...yRyyRy...', '...hssssh..z', '...sesses..Z', '....ssss...w', '..cttyyttc.w', '.ccttttttccw', '.csttttttssw',
+    '.csttttttc.w', '.cc.tttt.ccw', '.cc.pppp.ccw', '.c..pppp..cw', '....p..p...w', '....p..p...w', '...yy..yy..w', '...........w'] },
+  // ---- the rest of the gems, for the treasury ----
 };
 
 function spritePixels(kind, px, flip) {

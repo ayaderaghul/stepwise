@@ -89,7 +89,7 @@ api.get('/progress', requireUser, wrap(async (req, res) => {
 api.put('/progress', requireUser, wrap(async (req, res) => {
   const state = req.body?.state;
   if (!state || typeof state !== 'object' || Array.isArray(state)) return bad(res, 'Expected { state: {...} }.');
-  const allowed = ['solved', 'gems', 'shards', 'saved', 'fresh', 'questDone', 'runes', 'review', 'dare', 'peek'];
+  const allowed = ['solved', 'gems', 'shards', 'saved', 'fresh', 'questDone', 'runes', 'review', 'dare', 'peek', 'place', 'bonusGold', 'curio', 'hail', 'sayings'];
   const clean: Record<string, unknown> = {};
   for (const key of allowed) if (key in state) clean[key] = state[key];
   await pool.query(

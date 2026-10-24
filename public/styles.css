@@ -140,7 +140,7 @@ button:focus-visible, textarea:focus, input:focus, summary:focus-visible { outli
 .tablet h1 { margin: 0; padding: 14px; font-family: var(--body); font-weight: 400; font-size: 26px; line-height: 1.15; }
 .tablet.small { padding: 10px 12px; font-size: 21px; line-height: 1.15; box-shadow: none; }
 
-.nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 4px solid var(--shadow); background: var(--head); padding: 6px 8px calc(10px + env(safe-area-inset-bottom)); }
+.nav { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 4px solid var(--shadow); background: var(--head); padding: 6px 8px calc(10px + env(safe-area-inset-bottom)); }
 .nav button { height: 52px; border: none; background: transparent; color: var(--muted); font-family: var(--pixel); font-size: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
 .nav button.on { color: var(--gold); }
 
@@ -304,3 +304,113 @@ input { padding: 10px 12px; border: 3px solid var(--line); background: var(--dee
   .gem-pop, .blink, .rare-alex, .rare-moon, .sheen, .twinkle, .bob, .canopy .gem, .jungle-head .deco { animation: none !important; }
 }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* ---------------- gold, location, live weather ---------------- */
+.gold-chip { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; padding: 4px 8px; background: #2A2412; border: 3px solid var(--gold); box-shadow: 3px 3px 0 var(--shadow); font-family: var(--pixel); font-size: 9px; color: #FFE08A; cursor: pointer; position: relative; z-index: 1; }
+.gold-line { display: inline-flex; align-items: center; gap: 6px; font-family: var(--pixel); font-size: 9px; color: #FFE08A; }
+.gold-line.big { font-size: 11px; }
+.loc-card { position: relative; display: flex; flex-direction: column; gap: 10px; padding: 14px; background: #1E2A12; border: 3px solid var(--gold); box-shadow: 5px 5px 0 var(--shadow); }
+.loc-card.in-journal { background: transparent; border: none; box-shadow: none; padding: 0; }
+.city-form { display: flex; flex-direction: column; gap: 6px; }
+.city-row { display: flex; gap: 8px; }
+.city-row input { flex: 1; min-width: 0; }
+.place-list { display: flex; flex-direction: column; gap: 6px; }
+.place-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; background: var(--panel); border: 3px solid var(--line); text-align: left; cursor: pointer; font-size: 20px; }
+.place-row:hover { border-color: var(--gold); }
+.weather.live { align-items: flex-start; }
+.moon-line { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 18px; color: #C9CFDB; }
+.stones-row { display: flex; gap: 10px; margin-top: 10px; }
+.vstone { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 8px; background: #3A2620; border: 3px solid #F28C28; box-shadow: 3px 3px 0 var(--shadow); font-family: var(--pixel); font-size: 8px; color: #FFE08A; cursor: pointer; animation: smoulder 1.2s steps(2) infinite; }
+.vstone.taken { opacity: .45; animation: none; border-style: dashed; }
+@keyframes smoulder { 50% { border-color: #FFC93C; transform: translateY(-2px); } }
+
+.sky { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 0; }
+.sky i { position: absolute; top: -12px; display: block; animation-name: fall; animation-timing-function: linear; animation-iteration-count: infinite; }
+.sky-monsoon i { width: 2px; height: 10px; background: #6FA8E3; }
+.sky-thunder i { width: 2px; height: 10px; background: #8C93A6; }
+.sky-hail i { width: 6px; height: 6px; background: #F28C28; box-shadow: 0 0 0 2px #3A2A24; }
+.sky-frost i { width: 4px; height: 4px; background: #FFFFFF; animation-name: snow !important; animation-duration: 3.2s !important; }
+.sky-mist i, .sky-calm i { width: 70px; height: 6px; background: rgba(221, 232, 216, .22); top: auto; animation-name: mistdrift !important; animation-duration: 9s !important; }
+.sky-mist i:nth-child(odd), .sky-calm i:nth-child(odd) { bottom: 30%; } .sky-mist i:nth-child(even), .sky-calm i:nth-child(even) { bottom: 55%; }
+.sky-sun { position: absolute; top: 10px; right: 64px; animation: glint 2.4s steps(2) infinite; }
+.sky-moon { position: absolute; top: 14px; right: 120px; }
+.sky-flash { position: absolute; inset: 0; background: #F2EBD3; opacity: 0; animation: flash 5s steps(1) infinite; }
+@keyframes fall { to { transform: translateY(260px); } }
+@keyframes snow { 50% { transform: translate(8px, 130px); } 100% { transform: translate(0, 260px); } }
+@keyframes mistdrift { 0% { transform: translateX(-80px); } 100% { transform: translateX(480px); } }
+@keyframes glint { 50% { filter: brightness(1.35); transform: scale(1.06); } }
+@keyframes flash { 0%, 91%, 95%, 100% { opacity: 0; } 92%, 96% { opacity: .18; } }
+.jungle-head > *:not(.sky):not(.canopy):not(.deco) { position: relative; z-index: 1; }
+
+/* ---------------- the atlas ---------------- */
+.atlas { padding: 18px 16px 24px; display: flex; flex-direction: column; align-items: stretch; }
+.region-card { display: flex; flex-direction: column; gap: 8px; padding: 12px; background: var(--rb); border: 3px solid var(--rc); box-shadow: 5px 5px 0 var(--shadow); text-align: left; cursor: pointer; }
+.region-card.unreached { border-style: dashed; filter: saturate(.45) brightness(.8); }
+.region-card.here { box-shadow: 0 0 0 3px var(--gold), 5px 5px 0 var(--shadow); }
+.region-trail { width: 6px; height: 18px; margin: 0 auto; background: repeating-linear-gradient(#8A6A3A 0 6px, transparent 6px 10px); }
+.region-flags { display: flex; align-items: center; gap: 8px; }
+.qmark { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 3px; background: var(--rune); color: var(--ground); font-family: var(--pixel); font-size: 8px; animation: blink-q 1.4s steps(2) infinite; }
+@keyframes blink-q { 50% { transform: translateY(-2px); } }
+.you { display: inline-flex; align-items: center; gap: 4px; font-family: var(--pixel); font-size: 7px; color: var(--gold); }
+.mini-temples { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; }
+.mini-temple { opacity: .9; } .mini-temple.locked { opacity: .35; filter: grayscale(1); }
+.mini-temple.solved { border-bottom: 2px solid var(--gold); padding-bottom: 1px; }
+
+.region-map { position: relative; min-height: 100%; background: radial-gradient(circle at 20% 30%, rgba(62,142,78,.18) 0 18%, transparent 19%), radial-gradient(circle at 80% 70%, rgba(62,142,78,.16) 0 15%, transparent 16%), linear-gradient(var(--rb), var(--ground)); }
+.node .deco { opacity: .7; }
+.region-top { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 3px solid var(--shadow); }
+.path { position: relative; display: flex; flex-direction: column; padding: 14px 0; }
+.node { position: relative; padding-left: var(--x); height: auto; min-height: 96px; display: flex; align-items: center; }
+.node-in { transform: translateX(-50%); display: flex; justify-content: center; }
+.path-seg { position: relative; width: 6px; height: 22px; transform: translateX(-50%); background: repeating-linear-gradient(#C8A96A 0 6px, transparent 6px 11px); }
+.temple-node, .curio { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px; background: transparent; border: none; cursor: pointer; max-width: 160px; }
+.temple-art { position: relative; }
+.temple-node.locked .temple-art { filter: grayscale(.85) brightness(.7); }
+.temple-node.solved .temple-art::after { content: ''; position: absolute; left: 0; right: 0; bottom: -4px; height: 3px; background: var(--gold); }
+.temple-node.open .temple-art { filter: drop-shadow(0 0 6px var(--tc)); }
+.temple-node.you .temple-art { animation: blink-q 1s steps(2) infinite; }
+.torch-glow { position: absolute; inset: -6px; box-shadow: 0 0 18px rgba(242, 193, 78, .35); pointer-events: none; }
+.temple-name { font-size: 18px; line-height: 1; text-align: center; color: var(--ink); text-shadow: 2px 2px 0 var(--shadow); }
+.temple-node .badge { font-size: 7px; }
+.curio-art { position: relative; } .curio-art .qmark { position: absolute; top: -8px; right: -12px; }
+.curio-label { font-size: 17px; color: var(--rune); text-shadow: 2px 2px 0 var(--shadow); }
+.curio.taken { opacity: .5; } .curio.taken .curio-label { color: var(--muted); }
+.gate { display: flex; align-items: center; gap: 8px; padding: 8px 10px; background: #2A2A24; border: 3px solid var(--stone); color: var(--soft); max-width: 220px; }
+.gate.sealed { border-color: var(--clay); color: #F2B8A0; }
+
+.sheet { position: absolute; inset: 0; background: rgba(4, 10, 6, .72); display: flex; align-items: flex-end; z-index: 6; }
+.sheet-inner { position: relative; width: 100%; max-height: 86%; overflow-y: auto; padding: 44px 14px 18px; background: var(--ground); border-top: 4px solid var(--gold); display: flex; flex-direction: column; gap: 12px; }
+.sheet-close { position: absolute; top: 12px; right: 14px; }
+.curio-sheet .enc-head { align-items: center; }
+
+/* ---------------- hall of explorers ---------------- */
+.hall-head .tabs { position: relative; }
+.podium { position: relative; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: end; gap: 8px; padding: 34px 8px 0; background: linear-gradient(#0E1430, #18382A); border: 3px solid var(--line); box-shadow: 5px 5px 0 var(--shadow); }
+.plinth { display: flex; flex-direction: column; align-items: center; }
+.plinth-who { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding-bottom: 6px; text-align: center; }
+.plinth-base { width: 100%; height: var(--h); display: flex; justify-content: center; padding-top: 8px; background: repeating-linear-gradient(#8C8A7A 0 10px, #77756A 10px 12px); border: 3px solid var(--shadow); border-bottom: none; color: var(--ground); font-size: 14px; }
+.plinth.you .plinth-base { background: repeating-linear-gradient(#F2C14E 0 10px, #C89A2E 10px 12px); }
+.plinth.empty .plinth-base { opacity: .45; }
+.crown-glow { position: absolute; top: -10px; left: 50%; width: 60px; height: 60px; transform: translateX(-50%); background: radial-gradient(rgba(242, 193, 78, .4), transparent 70%); animation: glint 2s steps(2) infinite; }
+.hall-row { display: grid; grid-template-columns: 34px 26px 1fr auto; align-items: center; gap: 8px; padding: 8px 10px; background: var(--panel); border: 3px solid var(--line); }
+.hall-row.you { border-color: var(--gold); }
+.hall-name { font-size: 20px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rank-card { display: flex; align-items: center; gap: 14px; padding: 12px; background: var(--panel); border: 3px solid var(--pc); box-shadow: 4px 4px 0 var(--shadow); }
+.rank-card > .rank-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.ranks-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.rank-cell { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 4px; padding: 8px 4px; background: var(--panel); border: 3px solid var(--pc); text-align: center; }
+.rank-cell.dim { opacity: .4; border-style: dashed; }
+
+/* ---------------- treasury and sayings ---------------- */
+.treasure-head, .treasure-row { display: grid; grid-template-columns: 1fr 64px 52px 52px; align-items: center; gap: 6px; }
+.treasure-head span:first-child { padding-left: 4px; }
+.treasure-row { grid-template-columns: 18px 1fr 64px 52px 52px; padding: 4px 0; border-bottom: 2px dashed var(--line); font-size: 19px; }
+.treasure-head { grid-template-columns: 1fr 64px 52px 52px; }
+.t-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-val { display: inline-flex; align-items: center; gap: 4px; color: #FFE08A; }
+.t-have, .t-sub { text-align: right; }
+.saying-row { display: flex; align-items: center; gap: 12px; }
+@media (prefers-reduced-motion: reduce) {
+  .sky i, .sky-sun, .sky-flash, .vstone, .qmark, .temple-node.you .temple-art, .crown-glow { animation: none !important; }
+  .sky i { display: none; }
+}

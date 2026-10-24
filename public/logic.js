@@ -211,12 +211,21 @@ function reqsFor(q, gems, solved) {
     var met = !!done[t];
     out.push(textReq(met, (met ? '✓ ' : '') + 'Clear “' + t + '”', met ? 1 : 0, 1));
   });
+  var tribute = tributeFor(q);
+  if (tribute > 0) out.push(gemReq(q.family, tribute, gems));
   var k = tierNeed(q);
   if (k > 0) {
     var have = Math.min(tierHave(q, solved), k);
     out.push(textReq(have >= k, (have >= k ? '✓ ' : '') + have + '/' + k + ' easier ' + familyWord(q.family) + ' clears', have, k));
   }
   return out;
+}
+// The hardest temples demand tribute: gems of their own region (capped at what the easier temples there can pay).
+function tributeFor(q) {
+  if (q.diff !== 'Hard' || GEMS[q.family].rare) return 0;
+  var possible = 0;
+  PROBLEMS.forEach(function (x) { if (x.family === q.family && x.diff !== 'Hard') possible += rewardFor(x); });
+  return Math.min(6, possible);
 }
 function isLocked(q, gems, solved) { return reqsFor(q, gems, solved).some(function (r) { return !r.met; }); }
 function whyFor(q, gems, solved) {
@@ -229,6 +238,7 @@ function whyFor(q, gems, solved) {
       (rule.after || []).every(function (t) { return done[t]; });
     if (!ruleOpen) return rule.why;
   }
+  if (tributeFor(q) > (gems[q.family] || 0)) return 'The hardest temples demand tribute from their own region.';
   return 'Climb the tier: clear ' + (q.diff === 'Hard' ? 'Medium ' : 'Easy ') + familyWord(q.family) + ' quests first.';
 }
 
@@ -1035,11 +1045,6 @@ var RUNES = [
   { g: 'ᛟ', n: 'Othala', m: 'home, heritage', fam: 'Linked list', say: 'Every node remembers where it came from: keep a pointer back.' }
 ];
 var AETT_NAMES = ['FREYR’S ÆTT', 'HEIMDALL’S ÆTT', 'TYR’S ÆTT'];
-var WEATHER = {
-  monsoon: { key: 'monsoon', title: 'MONSOON', effect: 'Shards fall double today.', sprite: 'leaf', color: '#6FA8E3', bg: '#122533' },
-  fireflies: { key: 'fireflies', title: 'FIREFLY NIGHT', effect: 'Wild encounters are twice as likely.', sprite: 'firefly', color: '#C8F25A', bg: '#1E2A12' },
-  clear: { key: 'clear', title: 'CLEAR SKIES', effect: 'Jaguar dares pay triple.', sprite: 'flower', color: '#F2C14E', bg: '#2A2412' }
-};
 var REVIEW_DAYS = [1, 3, 7, 14, 30];
 var ANIMALS = {
   toucan: { sprite: 'toucan', color: '#F28C28', bg: '#2A1E12' },
@@ -1058,11 +1063,6 @@ function daysBetween(a, b) { return Math.round((new Date(b + 'T12:00:00') - new 
 function hashStr(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
 function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
 
-// Same weather for everyone on a given day: 40% calm, 20% each of the others.
-function weatherFor(day) {
-  var r = hashStr('weather:' + day) % 10;
-  return r < 4 ? null : r < 6 ? WEATHER.monsoon : r < 8 ? WEATHER.fireflies : WEATHER.clear;
-}
 // Today's rune: the one carved today, else a not-yet-carved rune chosen by the date.
 function runeIndexFor(day, runes) {
   if (runes && runes.today === day && typeof runes.todayIndex === 'number') return runes.todayIndex;
@@ -1084,6 +1084,125 @@ function giveShards(gems, shards, fam, n) {
 }
 function commonFamilies() { return GEM_ORDER.filter(function (f) { return !GEMS[f].rare; }); }
 
+// ---------------- the wider jungle: live weather, moon, gold, ranks, regions, curiosities ----------------
+
+// Real weather (Open-Meteo WMO codes) → jungle weather.
+var JUNGLE_WEATHER = {
+  sunshine: { key: 'sunshine', title: 'SUNSHINE', effect: 'Gems glint: every temple you clear pays +10% gold.', sprite: 'sun', color: '#F2C14E', bg: '#2A2412' },
+  monsoon: { key: 'monsoon', title: 'MONSOON', effect: 'Shards fall double today.', sprite: 'rain', color: '#6FA8E3', bg: '#122533' },
+  thunder: { key: 'thunder', title: 'THUNDERSTORM', effect: 'Wild encounters are twice as likely.', sprite: 'storm', color: '#C8C2FF', bg: '#1E2030' },
+  hail: { key: 'hail', title: 'STONE RAIN WARNING', effect: 'Volcanic stones are falling on the trail. Tap them for gold.', sprite: 'storm', color: '#F28C28', bg: '#2E1A12' },
+  mist: { key: 'mist', title: 'MURMURING MIST', effect: 'More curiosities wait along the trails.', sprite: 'mist', color: '#DDE8D8', bg: '#26332C' },
+  frost: { key: 'frost', title: 'FROST', effect: 'Overgrown ruins freeze: clearing vines pays double shards.', sprite: 'moon', color: '#CDEFFF', bg: '#1E2C38' },
+  calm: { key: 'calm', title: 'CLOUDY', effect: 'A quiet day under the canopy.', sprite: 'mist', color: '#A9C2A6', bg: '#18382A' }
+};
+function weatherFromCode(code, temp) {
+  if (code === null || code === undefined) return null;
+  if (code === 96 || code === 99) return JUNGLE_WEATHER.hail;
+  if (code === 95) return JUNGLE_WEATHER.thunder;
+  if ((code >= 71 && code <= 77) || code === 85 || code === 86 || (typeof temp === 'number' && temp <= 0)) return JUNGLE_WEATHER.frost;
+  if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return JUNGLE_WEATHER.monsoon;
+  if (code === 45 || code === 48) return JUNGLE_WEATHER.mist;
+  if (code <= 1) return JUNGLE_WEATHER.sunshine;
+  return JUNGLE_WEATHER.calm;
+}
+
+// Moon phase from the date: days since a known new moon, modulo the synodic month.
+var SYNODIC = 29.530588853;
+function moonAge(day) {
+  var t = new Date(day + 'T21:00:00').getTime();
+  var ref = Date.UTC(2000, 0, 6, 18, 14);
+  var age = ((t - ref) / 86400000) % SYNODIC;
+  return age < 0 ? age + SYNODIC : age;
+}
+function moonPhase(day) {
+  var a = moonAge(day);
+  if (a < 1.5 || a > SYNODIC - 1.5) return { key: 'new', name: 'New moon', effect: 'Rune blessings count twice tonight.' };
+  if (Math.abs(a - SYNODIC / 2) <= 1.0) return { key: 'full', name: 'Full moon', effect: 'A wolf prowls the atlas. Find it for moonstone shards.' };
+  if (a < SYNODIC / 2) return { key: 'waxing', name: 'Waxing moon', effect: '' };
+  return { key: 'waning', name: 'Waning moon', effect: '' };
+}
+
+// Gold per gem by how much mental energy the topic takes. Must match server/world.ts.
+var GOLD = {
+  'Arrays & hashing': 10, 'Math & bits': 10, 'Stack & queue': 14, 'Two pointers & window': 14, 'Greedy & intervals': 16,
+  'Binary search': 18, 'Linked list': 20, 'Trees & BST': 22, 'Heap': 24, 'Backtracking': 26, 'Graphs': 28,
+  'Dynamic programming': 32, 'Trie': 60, 'Segment tree': 80
+};
+var RANKS = [
+  { min: 0, title: 'WANDERER', sprite: 'wanderer', color: '#A9C2A6', gear: 'plain tunic, worn boots' },
+  { min: 100, title: 'SCOUT', sprite: 'scout', color: '#9BC46A', gear: 'bucket hat, backpack' },
+  { min: 300, title: 'PATHFINDER', sprite: 'pathfinder', color: '#C8A96A', gear: 'pith helmet, brass compass' },
+  { min: 600, title: 'CARTOGRAPHER', sprite: 'cartographer', color: '#6FA8E3', gear: 'goggles, map scroll' },
+  { min: 1000, title: 'ARCHIVIST', sprite: 'archivist', color: '#C9A6FF', gear: 'headphones, glowing laptop, robe' },
+  { min: 2000, title: 'RUNE SAGE', sprite: 'runesage', color: '#6FE3D2', gear: 'rune halo, beard, debugging duck' },
+  { min: 4000, title: 'TEMPLE MONARCH', sprite: 'monarch', color: '#F2C14E', gear: 'crown, cape, sapphire staff' }
+];
+function goldOf(gems, shards, bonus) {
+  var total = 0;
+  Object.keys(GOLD).forEach(function (f) {
+    total += ((gems && gems[f]) || 0) * GOLD[f];
+    total += Math.floor((((shards && shards[f]) || 0) * GOLD[f]) / 5);
+  });
+  return total + Math.max(0, Math.floor(bonus || 0));
+}
+function rankFor(gold) {
+  var r = RANKS[0];
+  RANKS.forEach(function (x) { if (gold >= x.min) r = x; });
+  var next = RANKS[RANKS.indexOf(r) + 1] || null;
+  return { title: r.title, sprite: r.sprite, color: r.color, gear: r.gear, min: r.min, next: next };
+}
+
+// Regions of the atlas, from the lowlands (easy topics) up to the crystal spires.
+var REGIONS = [
+  { key: 'sapphire', name: 'SAPPHIRE LOWLANDS', fam: 'Arrays & hashing', color: '#9CC7FF', bg: '#183E26' },
+  { key: 'pearl', name: 'PEARL SHORE', fam: 'Math & bits', color: '#F3E6D8', bg: '#28423A' },
+  { key: 'emerald', name: 'EMERALD FALLS', fam: 'Stack & queue', color: '#7BE0A6', bg: '#143A2E' },
+  { key: 'topaz', name: 'TOPAZ RIVER', fam: 'Two pointers & window', color: '#FFC93C', bg: '#173A40' },
+  { key: 'quartz', name: 'QUARTZ CANYON', fam: 'Binary search', color: '#F7A8C8', bg: '#3E3129' },
+  { key: 'amethyst', name: 'AMETHYST GROVES', fam: 'Greedy & intervals', color: '#C9A6FF', bg: '#28243C' },
+  { key: 'ruby', name: 'RUBY VINES', fam: 'Linked list', color: '#FF8FA3', bg: '#3A1F26' },
+  { key: 'jade', name: 'JADE WOODS', fam: 'Trees & BST', color: '#7FD9A8', bg: '#183424' },
+  { key: 'opal', name: 'OPAL SPRINGS', fam: 'Heap', color: '#9EE6D8', bg: '#173440' },
+  { key: 'garnet', name: 'GARNET RUINS', fam: 'Backtracking', color: '#FF9B73', bg: '#3A2219' },
+  { key: 'onyx', name: 'ONYX CAVERNS', fam: 'Graphs', color: '#B9B4D6', bg: '#202029' },
+  { key: 'diamond', name: 'DIAMOND PEAKS', fam: 'Dynamic programming', color: '#CDEFFF', bg: '#2A3640' },
+  { key: 'spires', name: 'CRYSTAL SPIRES', fam: 'Trie', fam2: 'Segment tree', color: '#6FE3D2', bg: '#123232' }
+];
+var TEMPLE_KIND = { Easy: 'hut', Medium: 'shrine', Hard: 'ziggurat' };
+var DIFF_ORDER = { Easy: 0, Medium: 1, Hard: 2 };
+function regionProblems(r) {
+  var list = [];
+  PROBLEMS.forEach(function (q, i) { if (q.family === r.fam || q.family === r.fam2) list.push(i); });
+  list.sort(function (a, b) { return DIFF_ORDER[PROBLEMS[a].diff] - DIFF_ORDER[PROBLEMS[b].diff] || (PROBLEMS[a].rank || 999) - (PROBLEMS[b].rank || 999); });
+  return list;
+}
+// Each region holds a few curiosities a day; the kinds and slots are fixed for the day.
+var CURIO_KINDS = ['runestone', 'mist', 'totem', 'toucan', 'monkey', 'frog'];
+function curiositiesFor(day, region, weatherKey) {
+  var n = 2 + (weatherKey === 'mist' ? 1 : 0);
+  var out = [];
+  for (var k = 0; k < n; k++) {
+    var h = hashStr(day + ':' + region.key + ':' + k);
+    out.push({ id: region.key + ':' + k, kind: CURIO_KINDS[h % CURIO_KINDS.length], slot: (h >>> 8) % 100 });
+  }
+  if (moonPhase(day).key === 'full' && REGIONS[hashStr('wolf:' + day) % REGIONS.length].key === region.key) {
+    out.push({ id: region.key + ':wolf', kind: 'wolf', slot: 50 });
+  }
+  return out;
+}
+function wolfRegion(day) { return moonPhase(day).key === 'full' ? REGIONS[hashStr('wolf:' + day) % REGIONS.length] : null; }
+
+var MURMURS = ['every loop is a promise to stop', 'the answer was in the input all along', 'count before you sort', 'the empty case is a case',
+  'what you store now, you will not recompute', 'trust the recursion one level down', 'draw it before you code it', 'two pointers, one truth'];
+var ANIMAL_LINES = {
+  toucan: ['A TOUCAN SWOOPS', 'It drops something shiny from its beak and squawks off into the canopy.'],
+  monkey: ['A MONKEY CHATTERS', 'It tosses you a shard it found in the ruins, then steals your banana.'],
+  frog: ['A FROG CROAKS', 'Under the lily pad where it sat, a shard glints.']
+};
+var CURIO_SPRITE = { runestone: 'runestone', mist: 'mist', totem: 'totem', toucan: 'toucan', monkey: 'monkey', frog: 'frog', wolf: 'wolf' };
+var CURIO_LABEL = { runestone: 'Humming runestone', mist: 'Murmuring land', totem: 'Strange totem', toucan: 'Rustling leaves', monkey: 'Chattering above', frog: 'Croaking pond', wolf: 'Moon wolf' };
+
 class Component extends DCLogic {
   st() {
     return Object.assign({
@@ -1091,20 +1210,23 @@ class Component extends DCLogic {
       gain: 0, reviewed: false, fresh: {}, unlocks: [], filter: 'all', shards: {}, shardGain: [], fused: [], questDone: {}, questGain: 0,
       questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0,
       runes: { carved: {} }, review: {}, dare: null, peek: null, hintUsed: false, practice: false, encounter: null,
-      ruinOpen: null, ruinDraft: '', ruinResult: null, frogDraft: '', dareResult: null, blessGain: 0
+      ruinOpen: null, ruinDraft: '', ruinResult: null, frogDraft: '', dareResult: null, blessGain: 0,
+      bonusGold: 0, curio: null, hail: null, sayings: [], place: null, atlasRegion: null, templePick: null, curioOpen: null, curioDraft: '', goldGain: 0, sunGold: 0
     }, this.state || {});
   }
   // Sound cues for the page to play after a state change.
   cue(name) { (this._cues = this._cues || []).push(name); }
   takeCues() { var c = this._cues || []; this._cues = []; return c; }
   today() { return localDay(); }
+  wx() { return this.weatherNow ? this.weatherNow.key : null; }
+  setWeather(w) { this.weatherNow = w; }
 
   start(pid, practice) {
     var fresh = Object.assign({}, this.st().fresh); delete fresh[pid];
     this.cue('rustle');
     this.setState({ screen: 'walk', pid: pid, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', reviewed: false, gain: 0,
       unlocks: [], fresh: fresh, shardGain: [], fused: [], questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0,
-      hintUsed: false, practice: !!practice, encounter: null, frogDraft: '', dareResult: null, blessGain: 0 });
+      hintUsed: false, practice: !!practice, encounter: null, frogDraft: '', dareResult: null, blessGain: 0, goldGain: 0, sunGold: 0, templePick: null, curioOpen: null });
   }
 
   // Called by the page after the tests ran. report: { passed, total, ms, fail, fatal, logs }
@@ -1116,15 +1238,15 @@ class Component extends DCLogic {
     if (!allPassed) { this.cue('block'); this.setState({ judging: false, report: report, bossTries: s.bossTries + 1 }); return; }
     if (s.practice) { this.cue('rustle'); this.setState({ judging: false, report: report, reviewed: true, gain: 0, questShare: 0 }); return; }
 
-    var weather = weatherFor(today);
-    var shardMult = weather === WEATHER.monsoon ? 2 : 1;
+    var wx = this.wx();
+    var shardMult = wx === 'monsoon' ? 2 : 1;
     var first = !s.solved[s.pid];
     var g = first ? rewardFor(p) - (s.questDone[s.pid] ? questPartFor(p) : 0) : 0;
 
-    // The jaguar's dare: no hints on this problem → the boss share is doubled (tripled under clear skies).
+    // The jaguar's dare: no hints on this problem → the boss share is doubled .
     var dare = s.dare, dareResult = null;
     if (dare && dare.pid === s.pid && first) {
-      if (!s.hintUsed) { var mult = weather === WEATHER.clear ? 3 : 2; g = g * mult; dareResult = 'Dare won: the guardian paid ×' + mult + '.'; }
+      if (!s.hintUsed) { var mult = 2; g = g * mult; dareResult = 'Dare won: the guardian paid ×' + mult + '.'; }
       else dareResult = 'The jaguar saw you ask the toucan. Dare over — nothing lost.';
       dare = null;
     }
@@ -1139,10 +1261,14 @@ class Component extends DCLogic {
         shardGain.push(GEMS[f].name.toLowerCase() + (shardMult > 1 ? ' ×' + shardMult : ''));
       });
       if (blessedFamily(today, s.runes) === p.family && !GEMS[p.family].rare) {
-        blessGain = shardMult;
-        fused = fused.concat(giveShards(gems, shards, p.family, shardMult));
+        blessGain = shardMult * (moonPhase(today).key === 'new' ? 2 : 1);
+        fused = fused.concat(giveShards(gems, shards, p.family, blessGain));
       }
     }
+    // Gold earned by this clear; sunshine adds 10%.
+    var goldGain = (g + (first && s.questDone[s.pid] ? questPartFor(p) : 0)) * GOLD[p.family];
+    var sunGold = wx === 'sunshine' && first ? Math.ceil(goldGain * 0.1) : 0;
+    var bonusGold = (s.bonusGold || 0) + sunGold;
     var review = Object.assign({}, s.review);
     if (first) review[s.pid] = { stage: 0, cleared: today, due: addDays(today, REVIEW_DAYS[0]) };
 
@@ -1152,7 +1278,7 @@ class Component extends DCLogic {
 
     var encounter = null;
     if (first) {
-      var chance = weather === WEATHER.fireflies ? 0.66 : 0.33;
+      var chance = wx === 'thunder' ? 0.66 : 0.33;
       if (Math.random() < chance) encounter = this.rollEncounter(s.pid, gems, solved, dare);
     }
 
@@ -1161,7 +1287,7 @@ class Component extends DCLogic {
     if (unlocks.length) this.cue('door');
     this.setState({ judging: false, report: report, reviewed: true, solved: solved, gems: gems, gain: g, questShare: questShare, unlocks: unlocks,
       fresh: fresh, shards: shards, shardGain: shardGain, fused: fused, review: review, dare: dare, dareResult: dareResult, encounter: encounter,
-      blessGain: blessGain });
+      blessGain: blessGain, bonusGold: bonusGold, goldGain: goldGain + sunGold, sunGold: sunGold });
   }
 
   rollEncounter(pid, gems, solved, dare) {
@@ -1187,7 +1313,7 @@ class Component extends DCLogic {
     var s = this.st(), e = s.encounter;
     if (!e || e.done) return;
     var today = this.today();
-    var mult = weatherFor(today) === WEATHER.monsoon ? 2 : 1;
+    var mult = this.wx() === 'monsoon' ? 2 : 1;
     var next = Object.assign({}, e, { done: true });
     var patch = { encounter: next };
     if (e.kind === 'toucan') {
@@ -1252,7 +1378,7 @@ class Component extends DCLogic {
     var q = PROBLEMS[pid];
     var r = s.review[pid] || { stage: 0, due: today };
     var step = q.steps[r.stage % q.steps.length];
-    var mult = weatherFor(today) === WEATHER.monsoon ? 2 : 1;
+    var mult = this.wx() === 'monsoon' || this.wx() === 'frost' ? 2 : 1;
     var gems = Object.assign({}, s.gems), shards = Object.assign({}, s.shards);
     var fused = giveShards(gems, shards, q.family, mult);
     var stage = r.stage + 1;
@@ -1262,6 +1388,199 @@ class Component extends DCLogic {
     this.cue('carve'); this.cue('shard');
     this.setState({ gems: gems, shards: shards, review: review, ruinOpen: null, ruinDraft: '',
       ruinResult: { pid: pid, day: today, question: step.q, answer: answer, insight: step.insight, wait: wait, shards: mult, fused: fused.length > 0 } });
+  }
+
+  // ---------------- the atlas, curiosities, stone rain, gold ----------------
+  setPlace(place) { this.cue('rustle'); this.setState({ place: place }); }
+  curioToday() {
+    var s = this.st(), d = this.today();
+    return s.curio && s.curio.day === d ? s.curio : { day: d, taken: {} };
+  }
+  regionReached(r) {
+    var s = this.st();
+    return regionProblems(r).some(function (i) { return s.solved[i] || !isLocked(PROBLEMS[i], s.gems, s.solved); });
+  }
+  openRegion(key) { this.cue('rustle'); this.setState({ atlasRegion: key, curioOpen: null, curioDraft: '', templePick: null }); }
+  pickTemple(pid) { this.cue('rustle'); this.setState({ templePick: pid, curioOpen: null }); }
+  closePick() { this.setState({ templePick: null, curioOpen: null, curioDraft: '' }); }
+
+  tapCurio(id) {
+    var s = this.st(), today = this.today();
+    var region = REGIONS.filter(function (r) { return id.indexOf(r.key + ':') === 0; })[0];
+    if (!region) return;
+    var c = curiositiesFor(today, region, this.wx()).filter(function (x) { return x.id === id; })[0];
+    if (!c) return;
+    var curio = this.curioToday();
+    if (curio.taken[id]) { this.setState({ curioOpen: Object.assign({}, curio.taken[id], { id: id, done: true }), templePick: null }); return; }
+    var h = hashStr(today + ':' + id + ':gift');
+    var fam = region.fam2 && h % 2 ? region.fam2 : region.fam;
+    var g = GEMS[fam];
+    var res = { id: id, kind: c.kind };
+    var gems = Object.assign({}, s.gems), shards = Object.assign({}, s.shards), fused = [];
+    var patch = {};
+    if (c.kind === 'runestone') {
+      var rune = RUNES[h % RUNES.length];
+      var sayings = (s.sayings || []).filter(function (x) { return x.n !== rune.n; });
+      sayings.unshift({ g: rune.g, n: rune.n, say: rune.say, day: today });
+      patch.sayings = sayings.slice(0, 40);
+      Object.assign(res, { title: 'A RUNESTONE HUMS', glyph: rune.g, text: rune.n + ' · ' + rune.m, quote: rune.say, reward: 'Saying added to your satchel' });
+      this.cue('rune');
+    } else if (c.kind === 'mist') {
+      fused = giveShards(gems, shards, fam, 2);
+      Object.assign(res, { title: 'THE LAND MURMURS', text: 'Whispers rise from the mist: “' + MURMURS[h % MURMURS.length] + '”', reward: '+2 ' + g.name.toLowerCase() + ' shards' });
+      this.cue('shard');
+    } else if (c.kind === 'totem') {
+      var pool = PROBLEMS.map(function (q, i) { return i; }).filter(function (i) { return s.solved[i] && !GEMS[PROBLEMS[i].family].rare; });
+      var mine = pool.filter(function (i) { return PROBLEMS[i].family === region.fam; });
+      var from = mine.length ? mine : pool;
+      if (!from.length) {
+        this.setState({ curioOpen: { id: id, kind: 'totem', title: 'A SILENT TOTEM', text: 'The totem only speaks to explorers who have cleared a temple. Come back after your first one.', done: true, empty: true }, templePick: null });
+        return;
+      }
+      var pid = from[h % from.length], q = PROBLEMS[pid], st = q.steps[(h >>> 4) % q.steps.length];
+      this.cue('toucan');
+      this.setState({ curioOpen: { id: id, kind: 'totem', title: 'THE TOTEM ASKS', text: 'From “' + q.title + '”, answer from memory:', question: st.q, pid: pid, insight: st.insight,
+        reward: '+2 ' + GEMS[q.family].name.toLowerCase() + ' shards for any answer' }, curioDraft: '', templePick: null });
+      return;
+    } else if (c.kind === 'wolf') {
+      fused = giveShards(gems, shards, 'Segment tree', 2);
+      Object.assign(res, { title: 'THE MOON WOLF', text: 'Under the full moon the wolf drops two pale stones at your feet, then is gone.', reward: '+2 moonstone shards (5 make a Moonstone, 80 gold)' });
+      this.cue('rare');
+    } else {
+      fused = giveShards(gems, shards, fam, 1);
+      Object.assign(res, { title: ANIMAL_LINES[c.kind][0], text: ANIMAL_LINES[c.kind][1], reward: '+1 ' + g.name.toLowerCase() + ' shard' });
+      this.cue(c.kind === 'toucan' ? 'toucan' : 'shard');
+    }
+    if (fused.length) res.reward += ' · 5 fused → +1 ' + fused.join(', ');
+    var taken = Object.assign({}, curio.taken); taken[id] = res;
+    patch.curio = { day: today, taken: taken };
+    patch.gems = gems; patch.shards = shards;
+    patch.curioOpen = Object.assign({}, res, { done: true, fresh: true });
+    patch.templePick = null;
+    this.setState(patch);
+  }
+  answerTotem() {
+    var s = this.st(), today = this.today(), o = s.curioOpen;
+    var answer = (s.curioDraft || '').trim();
+    if (!o || o.kind !== 'totem' || o.done || !answer) return;
+    var fam = PROBLEMS[o.pid].family;
+    var gems = Object.assign({}, s.gems), shards = Object.assign({}, s.shards);
+    var fused = giveShards(gems, shards, fam, 2);
+    var res = { kind: 'totem', title: 'THE TOTEM NODS', question: o.question, answer: answer, insight: o.insight,
+      reward: '+2 ' + GEMS[fam].name.toLowerCase() + ' shards' + (fused.length ? ' · 5 fused → +1 ' + fused.join(', ') : '') };
+    var curio = this.curioToday();
+    var taken = Object.assign({}, curio.taken); taken[o.id] = res;
+    this.cue('carve'); this.cue('shard');
+    this.setState({ gems: gems, shards: shards, curio: { day: today, taken: taken }, curioOpen: Object.assign({}, res, { id: o.id, done: true, fresh: true }), curioDraft: '' });
+  }
+  closeCurio() { this.setState({ curioOpen: null, curioDraft: '' }); }
+
+  tapStone(i) {
+    var s = this.st(), today = this.today();
+    if (this.wx() !== 'hail') return;
+    var hail = s.hail && s.hail.day === today ? s.hail : { day: today, taken: [false, false, false] };
+    if (hail.taken[i]) return;
+    var taken = hail.taken.slice(); taken[i] = true;
+    this.cue('gem');
+    this.setState({ hail: { day: today, taken: taken }, bonusGold: (s.bonusGold || 0) + 5 });
+  }
+
+  worldVals() {
+    var s = this.st(), self = this, today = this.today();
+    var gold = goldOf(s.gems, s.shards, s.bonusGold);
+    var r = rankFor(gold);
+    var rank = { title: r.title, sprite: r.sprite, color: r.color, gear: r.gear, gold: gold,
+      nextTitle: r.next ? r.next.title : null, toNext: r.next ? r.next.min - gold : 0,
+      pct: r.next ? Math.round((gold - r.min) / (r.next.min - r.min) * 100) + '%' : '100%' };
+    var treasury = GEM_ORDER.map(function (f) {
+      var have = s.gems[f] || 0, sh = s.shards[f] || 0;
+      return { fam: f, name: GEMS[f].name, color: GEMS[f].color, gem: gemPixels(f, 2), value: GOLD[f], have: have, shards: sh, rare: !!GEMS[f].rare,
+        subtotal: have * GOLD[f] + Math.floor(sh * GOLD[f] / 5) };
+    }).sort(function (a, b) { return a.value - b.value; });
+    var w = this.weatherNow || null;
+    var moon = moonPhase(today);
+    var wolfR = wolfRegion(today);
+    var hail = s.hail && s.hail.day === today ? s.hail : { taken: [false, false, false] };
+    var stones = w && w.key === 'hail' ? hail.taken.map(function (t, i) { return { taken: t, tap: function () { self.tapStone(i); } }; }) : [];
+    var curio = this.curioToday();
+
+    // The frontier: the lowest region that still has an open temple you have not cleared.
+    var here = null;
+    REGIONS.forEach(function (rg) {
+      if (here) return;
+      if (regionProblems(rg).some(function (i) { return !s.solved[i] && !isLocked(PROBLEMS[i], s.gems, s.solved); })) here = rg.key;
+    });
+    var regions = REGIONS.map(function (rg) {
+      var list = regionProblems(rg);
+      var cleared = list.filter(function (i) { return s.solved[i]; }).length;
+      var reached = self.regionReached(rg);
+      var curios = reached ? curiositiesFor(today, rg, w && w.key).filter(function (c) { return !curio.taken[c.id]; }).length : 0;
+      return {
+        key: rg.key, name: rg.name, color: rg.color, bg: rg.bg, fam: rg.fam, reached: reached, here: here === rg.key, curios: curios,
+        cleared: cleared, total: list.length, wolf: !!(wolfR && wolfR.key === rg.key && reached && !curio.taken[rg.key + ':wolf']),
+        temples: list.map(function (i) {
+          var q = PROBLEMS[i];
+          return { pid: i, kind: GEMS[q.family].rare ? 'spire' : TEMPLE_KIND[q.diff], solved: !!s.solved[i], locked: !s.solved[i] && isLocked(q, s.gems, s.solved) };
+        }),
+        open: function () { self.openRegion(rg.key); }
+      };
+    });
+
+    var region = null;
+    var rg = REGIONS.filter(function (x) { return x.key === s.atlasRegion; })[0];
+    if (rg) {
+      var list = regionProblems(rg);
+      var reached = this.regionReached(rg);
+      var curs = reached ? curiositiesFor(today, rg, w && w.key) : [];
+      var nodes = [];
+      var gateDone = false;
+      var hardLocked = list.some(function (i) { return PROBLEMS[i].diff === 'Hard' && !s.solved[i] && isLocked(PROBLEMS[i], s.gems, s.solved); });
+      list.forEach(function (i, k) {
+        curs.forEach(function (c) { if (Math.floor(c.slot / 100 * list.length) === k) nodes.push({ curio: c }); });
+        var q = PROBLEMS[i];
+        if (q.diff === 'Hard' && !gateDone) {
+          gateDone = true;
+          var t = tributeFor(q);
+          nodes.push({ gate: true, sealed: hardLocked, label: hardLocked ? 'SEALED GATE · tribute ' + t + ' ' + GEMS[q.family].plural : 'THE GATE STANDS OPEN' });
+        }
+        nodes.push({ pid: i });
+      });
+      curs.forEach(function (c) { if (Math.floor(c.slot / 100 * list.length) >= list.length) nodes.push({ curio: c }); });
+      var youSet = false;
+      nodes = nodes.map(function (n, k) {
+        var out = { x: Math.round(50 + 28 * Math.sin(k * 1.15)) };
+        if (n.gate) return Object.assign(out, { isGate: true, sealed: n.sealed, label: n.label });
+        if (n.curio) {
+          var c = n.curio, t = curio.taken[c.id];
+          return Object.assign(out, { isCurio: true, kind: c.kind, sprite: CURIO_SPRITE[c.kind], taken: !!t, label: t ? (t.title || 'Found') : CURIO_LABEL[c.kind],
+            tap: function () { self.tapCurio(c.id); } });
+        }
+        var q = PROBLEMS[n.pid];
+        var solved = !!s.solved[n.pid], locked = !solved && isLocked(q, s.gems, s.solved);
+        var you = !solved && !locked && !youSet;
+        if (you) youSet = true;
+        return Object.assign(out, { isTemple: true, pid: n.pid, title: q.title, diff: q.diff, kind: GEMS[q.family].rare ? 'spire' : TEMPLE_KIND[q.diff],
+          solved: solved, locked: locked, you: you, color: GEMS[q.family].color,
+          tap: function () { self.pickTemple(n.pid); } });
+      });
+      region = { key: rg.key, name: rg.name, color: rg.color, bg: rg.bg, fam: rg.fam, fam2: rg.fam2 || null, reached: reached,
+        gem: gemPixels(rg.fam, 3), cleared: list.filter(function (i) { return s.solved[i]; }).length, total: list.length,
+        nodes: nodes.reverse(),
+        lockWhy: reached ? '' : (LOCKS[rg.fam] ? LOCKS[rg.fam].why : 'Clear the easier temples first.'),
+        back: function () { self.cue('rustle'); self.setState({ atlasRegion: null, templePick: null, curioOpen: null }); } };
+    }
+
+    return {
+      gold: gold, rank: rank, treasury: treasury, ranks: RANKS,
+      weather: w, moon: moon, wolfRegion: wolfR ? wolfR.name : null, stones: stones,
+      place: s.place || null,
+      regions: regions, region: region, regionKey: s.atlasRegion || null,
+      templePick: typeof s.templePick === 'number' ? s.templePick : null,
+      curioOpen: s.curioOpen || null, curioDraft: s.curioDraft || '',
+      answerTotem: function () { self.answerTotem(); }, closeCurio: function () { self.closeCurio(); }, closePick: function () { self.closePick(); },
+      sayings: s.sayings || [],
+      goldLabel: s.goldGain > 0 ? '+' + s.goldGain + ' GOLD' + (s.sunGold > 0 ? ' (☀ +' + s.sunGold + ' sunshine)' : '') : ''
+    };
   }
 
   renderVals() {
@@ -1278,7 +1597,7 @@ class Component extends DCLogic {
     var stepObj = p.steps[Math.min(s.step, total - 1)];
     var count = function (topic) { return s.gems[topic] || 0; };
     var totalGems = GEM_ORDER.reduce(function (n, t) { return n + count(t); }, 0);
-    var weather = weatherFor(today);
+    var weather = this.weatherNow || null;
     var peekPid = s.peek && s.peek.day === today ? s.peek.pid : null;
     var darePid = s.dare ? s.dare.pid : null;
 
@@ -1327,10 +1646,10 @@ class Component extends DCLogic {
     if (s.filter === 'saved') posts = posts.filter(function (x) { return x.isSaved; });
     else if (s.filter !== 'all') posts = posts.filter(function (x) { return x.family === s.filter; });
     var solvedCount = Object.keys(s.solved).length;
-    var chipKeys = ['all'].concat(GEM_ORDER.filter(function (f) { return PROBLEMS.some(function (q) { return q.family === f; }); }));
+    var chipKeys = ['all', 'saved'].concat(GEM_ORDER.filter(function (f) { return PROBLEMS.some(function (q) { return q.family === f; }); }));
     var chips = chipKeys.map(function (k) {
-      var n = k === 'all' ? PROBLEMS.length : PROBLEMS.filter(function (q) { return q.family === k; }).length;
-      return { label: (k === 'all' ? 'ALL' : SHORT[k]) + ' ' + n, on: s.filter === k, pick: function () { self.cue('rustle'); self.setState({ filter: k }); } };
+      var n = k === 'all' ? PROBLEMS.length : k === 'saved' ? Object.keys(s.saved).filter(function (x) { return s.saved[x]; }).length : PROBLEMS.filter(function (q) { return q.family === k; }).length;
+      return { label: (k === 'all' ? 'ALL' : k === 'saved' ? '★ MARKED' : SHORT[k]) + ' ' + n, on: s.filter === k, pick: function () { self.cue('rustle'); self.setState({ filter: k }); } };
     });
     var feedCount = (s.filter === 'all' ? 'Taro 75 + 3 bonus' : s.filter === 'saved' ? 'Marked trails' : s.filter) + ' · ' + posts.length + ' of ' + allCount + ' trails · ' + solvedCount + (solvedCount === 1 ? ' temple' : ' temples') + ' cleared';
 
@@ -1366,7 +1685,7 @@ class Component extends DCLogic {
         pid: d.pid, title: q.title, gem: gemPixels(q.family, 2), gemColor: GEMS[q.family].color, gemName: GEMS[q.family].name.toLowerCase(),
         ago: ago === null ? 'cleared a while ago' : ago === 0 ? 'cleared today' : 'cleared ' + ago + ' day' + (ago === 1 ? '' : 's') + ' ago',
         question: step.q, open: s.ruinOpen === d.pid, draft: s.ruinOpen === d.pid ? s.ruinDraft : '',
-        reward: '+' + (weather === WEATHER.monsoon ? 2 : 1) + ' ' + GEMS[q.family].name.toLowerCase() + ' shard · keeps it shining',
+        reward: '+' + ((weather && (weather.key === 'monsoon' || weather.key === 'frost')) ? 2 : 1) + ' ' + GEMS[q.family].name.toLowerCase() + ' shard · keeps it shining',
         openIt: function () { self.cue('rustle'); self.setState({ ruinOpen: d.pid, ruinDraft: '' }); },
         carve: function () { self.carveRuin(); }
       };
@@ -1385,11 +1704,11 @@ class Component extends DCLogic {
       var base = { kind: e.kind, sprite: a.sprite, color: a.color, bg: a.bg, done: e.done, msg: e.msg, answer: e.answer || '' };
       if (e.kind === 'toucan') enc = Object.assign(base, {
         title: 'A TOUCAN DROPS SOMETHING', line: 'It found something shiny by the river.',
-        detail: 'A ' + GEMS[e.fam].name.toLowerCase() + ' shard, just for you.', reward: weather === WEATHER.monsoon ? 'Monsoon: two shards!' : '',
+        detail: 'A ' + GEMS[e.fam].name.toLowerCase() + ' shard, just for you.', reward: weather && weather.key === 'monsoon' ? 'Monsoon: two shards!' : '',
         primary: { label: 'TAKE IT ▶', act: function () { self.encounterAction('accept'); } } });
       else if (e.kind === 'jaguar') enc = Object.assign(base, {
         title: 'A JAGUAR DARES YOU', line: 'Clear a temple without asking the toucan.',
-        detail: 'Dare: ' + t.title + ', no hints.', reward: 'Win: the guardian pays ×' + (weather === WEATHER.clear ? 3 : 2) + '. Lose: nothing.',
+        detail: 'Dare: ' + t.title + ', no hints.', reward: 'Win: the guardian pays ×2. Lose: nothing.',
         primary: { label: 'ACCEPT DARE ▶', act: function () { self.encounterAction('accept'); } },
         secondary: { label: 'NOT TODAY', act: function () { self.encounterAction('decline'); } } });
       else if (e.kind === 'frog') {
@@ -1481,7 +1800,7 @@ class Component extends DCLogic {
       bossPrize: s.practice ? 'Practice run: the seal still holds, so no gems here yet.'
         : s.solved[s.pid] ? 'Already cleared — this run is for practice.'
         : pg.rare ? 'Pass every trial for the rare ' + pg.name.toLowerCase() + '.'
-        : 'Pass every trial for +' + (rewardFor(p) - (s.questDone[s.pid] ? questPartFor(p) : 0)) + ' ' + pg.plural + (dareHere ? ' (×' + (weather === WEATHER.clear ? 3 : 2) + ' if the dare holds)' : '') + '.',
+        : 'Pass every trial for +' + (rewardFor(p) - (s.questDone[s.pid] ? questPartFor(p) : 0)) + ' ' + pg.plural + (dareHere ? ' (×2 if the dare holds)' : '') + '.',
       hasQuestGain: s.questGain > 0,
       questLine: '+' + s.questGain + ' ' + (s.questGain === 1 ? pg.name : pg.plural).toUpperCase() + ' FOR THE TRAIL MARKERS',
       questUnlocks: s.questUnlocks, hasQuestUnlocks: s.questUnlocks.length > 0,

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { migrate, pool } from './db.js';
 import { loadUser } from './auth.js';
 import { api } from './routes.js';
+import { world } from './world.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, '..', 'public');
@@ -34,7 +35,7 @@ app.get('/healthz', async (_req, res) => {
   try { await pool.query('SELECT 1'); res.json({ ok: true }); } catch { res.status(503).json({ ok: false }); }
 });
 
-app.use('/api', express.json({ limit: '300kb' }), loadUser, api);
+app.use('/api', express.json({ limit: '300kb' }), loadUser, api, world);
 app.use('/api', (_req, res) => { res.status(404).json({ error: 'Not found.' }); });
 app.use(express.static(publicDir, { maxAge: '5m' }));
 
