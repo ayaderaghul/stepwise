@@ -7,14 +7,49 @@ export const world = Router();
 // Open-Meteo is free and needs no key. The bases are overridable for tests.
 const FORECAST = process.env.OPEN_METEO_FORECAST ?? 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE = process.env.OPEN_METEO_GEOCODE ?? 'https://geocoding-api.open-meteo.com/v1/search';
+// Backups when Open-Meteo refuses (its free quota is per IP, and Render's outbound IPs are shared).
+const MET = process.env.MET_FORECAST ?? 'https://api.met.no/weatherapi/locationforecast/2.0/compact';
+const NOMINATIM = process.env.NOMINATIM_SEARCH ?? 'https://nominatim.openstreetmap.org/search';
+const UA = 'stepwise-app/1.0 (+https://stepwise-app-izre.onrender.com)';
 
 const wrap = (fn: (req: AuthedRequest, res: Response) => Promise<void>) =>
   (req: AuthedRequest, res: Response, next: (err?: unknown) => void) => { fn(req, res).catch(next); };
 
 async function getJson(url: string): Promise<unknown> {
-  const r = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'stepwise-app' } });
+  const r = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': UA } });
   if (!r.ok) throw new Error('upstream ' + r.status + ' ' + (await r.text()).slice(0, 200));
   return r.json();
+}
+
+type Weather = { code: number | null; temp: number | null; isDay: boolean; timezone: string | null; source: string };
+
+async function openMeteoWeather(lat: number, lon: number): Promise<Weather> {
+  const url = `${FORECAST}?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&current=temperature_2m,weather_code,is_day&timezone=auto`;
+  const j = await getJson(url) as { current?: { temperature_2m?: number; weather_code?: number; is_day?: number }; timezone?: string };
+  return { code: j.current?.weather_code ?? null, temp: j.current?.temperature_2m ?? null, isDay: j.current?.is_day === 1, timezone: j.timezone ?? null, source: 'open-meteo' };
+}
+
+// MET Norway symbol codes → the WMO codes the game understands.
+export function metToWmo(symbol: string): number {
+  const s = symbol.replace(/_(day|night|polartwilight)$/, '');
+  if (s.includes('thunder')) return 95;
+  if (s === 'fog') return 45;
+  if (s.includes('snow') || s.includes('sleet')) return s.includes('showers') ? 85 : 73;
+  if (s.includes('rainshowers')) return 80;
+  if (s.includes('rain')) return s.startsWith('heavy') ? 65 : s.startsWith('light') ? 61 : 63;
+  if (s === 'clearsky') return 0;
+  if (s === 'fair') return 1;
+  if (s === 'partlycloudy') return 2;
+  return 3;
+}
+async function metWeather(lat: number, lon: number): Promise<Weather> {
+  const j = await getJson(`${MET}?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`) as {
+    properties?: { timeseries?: Array<{ data?: { instant?: { details?: { air_temperature?: number } }; next_1_hours?: { summary?: { symbol_code?: string } }; next_6_hours?: { summary?: { symbol_code?: string } } } }> };
+  };
+  const now = j.properties?.timeseries?.[0]?.data;
+  const symbol = now?.next_1_hours?.summary?.symbol_code ?? now?.next_6_hours?.summary?.symbol_code;
+  if (!symbol) throw new Error('MET: no symbol in response');
+  return { code: metToWmo(symbol), temp: now?.instant?.details?.air_temperature ?? null, isDay: !/_night$/.test(symbol), timezone: null, source: 'met.no' };
 }
 
 // ---------------- weather: cached for 30 minutes per ~10 km grid cell ----------------
@@ -30,14 +65,11 @@ world.get('/weather', requireUser, wrap(async (req, res) => {
   const hit = weatherCache.get(key);
   if (hit && Date.now() - hit.at < 30 * 60 * 1000) { res.json(hit.data); return; }
   try {
-    const url = `${FORECAST}?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&current=temperature_2m,weather_code,is_day&timezone=auto`;
-    const j = await getJson(url) as { current?: { temperature_2m?: number; weather_code?: number; is_day?: number }; timezone?: string };
-    const data = {
-      code: j.current?.weather_code ?? null,
-      temp: j.current?.temperature_2m ?? null,
-      isDay: j.current?.is_day === 1,
-      timezone: j.timezone ?? null
-    };
+    let data: Weather;
+    try { data = await openMeteoWeather(lat, lon); } catch (first) {
+      console.error('open-meteo weather failed, trying met.no:', (first as Error).message);
+      data = await metWeather(lat, lon);
+    }
     weatherCache.set(key, { at: Date.now(), data });
     if (weatherCache.size > 2000) weatherCache.delete(weatherCache.keys().next().value as string);
     res.json(data);
@@ -50,16 +82,24 @@ world.get('/weather', requireUser, wrap(async (req, res) => {
 world.get('/geocode', requireUser, wrap(async (req, res) => {
   const q = String(req.query.q ?? '').trim().slice(0, 80);
   if (q.length < 2) { res.status(400).json({ error: 'Type at least two letters.' }); return; }
+  const round = (n: number) => Math.round(n * 1000) / 1000;
   try {
-    const j = await getJson(`${GEOCODE}?name=${encodeURIComponent(q)}&count=6&language=en&format=json`) as {
-      results?: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>;
-    };
-    res.json({
-      results: (j.results ?? []).map((r) => ({
-        name: r.name, country: r.country ?? '', region: r.admin1 ?? '',
-        lat: Math.round(r.latitude * 1000) / 1000, lon: Math.round(r.longitude * 1000) / 1000
-      }))
-    });
+    let results;
+    try {
+      const j = await getJson(`${GEOCODE}?name=${encodeURIComponent(q)}&count=6&language=en&format=json`) as {
+        results?: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>;
+      };
+      results = (j.results ?? []).map((r) => ({ name: r.name, country: r.country ?? '', region: r.admin1 ?? '', lat: round(r.latitude), lon: round(r.longitude) }));
+    } catch (first) {
+      console.error('open-meteo geocode failed, trying nominatim:', (first as Error).message);
+      const j = await getJson(`${NOMINATIM}?q=${encodeURIComponent(q)}&format=jsonv2&limit=6&addressdetails=1&accept-language=en`) as
+        Array<{ name?: string; display_name: string; lat: string; lon: string; address?: { country?: string; state?: string; region?: string } }>;
+      results = j.map((r) => ({
+        name: r.name || r.display_name.split(',')[0], country: r.address?.country ?? '', region: r.address?.state ?? r.address?.region ?? '',
+        lat: round(Number(r.lat)), lon: round(Number(r.lon))
+      }));
+    }
+    res.json({ results });
   } catch (err) {
     console.error('geocode failed:', (err as Error).message, (err as { cause?: unknown }).cause ?? '');
     res.status(502).json({ error: 'Couldn’t search for places right now.' });
@@ -115,7 +155,8 @@ world.get('/leaderboard', requireUser, wrap(async (req, res) => {
 
 // One probe at start-up, so the logs show whether the weather service is reachable from this host.
 export function probeWeather() {
-  getJson(`${FORECAST}?latitude=41.9&longitude=12.5&current=temperature_2m,weather_code,is_day&timezone=auto`)
-    .then((j) => console.log('weather probe ok:', JSON.stringify((j as { current?: unknown }).current)))
-    .catch((err) => console.error('weather probe failed:', (err as Error).message, (err as { cause?: unknown }).cause ?? ''));
+  openMeteoWeather(41.9, 12.5).then((w) => console.log('weather probe ok (open-meteo):', JSON.stringify(w)))
+    .catch((err) => console.error('weather probe: open-meteo failed:', (err as Error).message));
+  metWeather(41.9, 12.5).then((w) => console.log('weather probe ok (met.no):', JSON.stringify(w)))
+    .catch((err) => console.error('weather probe: met.no failed:', (err as Error).message));
 }
