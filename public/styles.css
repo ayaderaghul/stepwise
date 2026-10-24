@@ -414,3 +414,14 @@ input { padding: 10px 12px; border: 3px solid var(--line); background: var(--dee
   .sky i, .sky-sun, .sky-flash, .vstone, .qmark, .temple-node.you .temple-art, .crown-glow { animation: none !important; }
   .sky i { display: none; }
 }
+
+/* New-moon fairies */
+.fairy-glow { filter: drop-shadow(0 0 6px #CFF7FF) drop-shadow(0 0 12px rgba(242, 193, 78, .6)); animation: flutter 1.6s steps(4) infinite; }
+@keyframes flutter { 25% { transform: translate(1px, -3px); } 50% { transform: translate(0, -5px); } 75% { transform: translate(-1px, -2px); } }
+.fairy-btn { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: #141A38; border: 3px solid #8FE3F5; box-shadow: 4px 4px 0 var(--shadow); color: var(--ink); text-align: left; font-size: 19px; line-height: 1.1; cursor: pointer; }
+.fairy-btn .px { font-size: 8px; color: #CFF7FF; }
+.fairy-row { display: flex; align-items: flex-start; gap: 12px; }
+.fairy-bubble { background: #141A38; border-color: #8FE3F5; color: var(--ink); }
+.fairy-bubble p + p { margin-top: 8px; color: #FFF6B0; }
+.fairy-bubble .px { color: #CFF7FF; }
+@media (prefers-reduced-motion: reduce) { .fairy-glow { animation: none; } }

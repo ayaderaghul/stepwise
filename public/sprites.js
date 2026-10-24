@@ -90,7 +90,9 @@ var SPRITES = {
   monarch: { c: { y: '#F2C14E', R: '#FF4D6D', h: '#4A2A12', s: '#E8B48A', e: '#1A120A', z: '#3D8BFF', Z: '#C7E2FF', w: '#8A5A33', c: '#A3162F', t: '#F2C14E', p: '#6A35C2' }, s: [
     '...y.yy.y...', '...yRyyRy...', '...hssssh..z', '...sesses..Z', '....ssss...w', '..cttyyttc.w', '.ccttttttccw', '.csttttttssw',
     '.csttttttc.w', '.cc.tttt.ccw', '.cc.pppp.ccw', '.c..pppp..cw', '....p..p...w', '....p..p...w', '...yy..yy..w', '...........w'] },
-  // ---- the rest of the gems, for the treasury ----
+  // ---- the rest of the gems, for the treasury ----,
+  fairy: { c: { w: '#CFF7FF', W: '#8FE3F5', y: '#FFF6B0', Y: '#F2C14E', s: '#F2D7B8', h: '#E8A0D8', d: '#7A4FA0' }, s: [
+    '....y.y....', '.....Y.....', 'WW..hhh..WW', 'wWW.hsh.WWw', 'wwWW.s.WWww', '.wwW.d.Www.', '..wW.dd.Ww.', '...W.dd.W..', '....d..d...', '...y.....y.', '.y.........'] }
 };
 
 function spritePixels(kind, px, flip) {

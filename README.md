@@ -25,7 +25,8 @@ Progress and every attempt are saved to your account, so they follow you across 
     monsoon (double shards), thunder (more encounters), stone rain on hail (three volcanic stones, 5 gold each),
     murmuring mist on fog (more curiosities), frost on snow or below 0° (ruins pay double).
   - *Moon events*: the phase is computed from the date. Full moon: a wolf in one region gives moonstone shards.
-    New moon: rune blessings count twice.
+    New moon: fairies appear on trail markers and in atlas regions with a technique hint and a proverb
+    (kept in the satchel), and rune blessings count twice.
 - **Atlas**: the 78 temples in 13 regions, lowlands (hashing) up to the crystal spires (rare gems). Huts, shrines and
   ziggurats by difficulty; the hardest temples sit behind a sealed gate that demands gems of their own region.
   Each reached region has a few curiosities a day: runestones (a saying), murmuring land and animals (shards),

@@ -455,7 +455,10 @@
       main = '<span class="kicker">TRAIL MARKER ' + v.stepNum + ' / ' + v.stepTotal + '</span>' +
         '<div class="tablet">' + runeStrip('ᛏᚱᚨᛁᛚᛗᚨᚱᚲᛖᚱᛏᚱᚨᛁᛚᛗᚨᚱᚲᛖᚱ') + '<h1>' + esc(v.question) + '</h1></div>';
       if (v.notRevealed) {
-        main += (v.tipOpen ? '<div class="toucan-row">' + sp('toucan', 4) + '<div class="bubble"><span class="px">TOUCAN SAYS</span><p>' + esc(v.tip) + '</p></div></div>' : '') +
+        var fairy = v.fairy ? (v.fairy.open
+          ? '<div class="fairy-row">' + sp('fairy', 3, false, 'fairy-glow') + '<div class="bubble fairy-bubble"><span class="px">FAIRY LIGHT · NEW MOON</span><p>' + esc(v.fairy.hint) + '</p><p class="saying">“' + esc(v.fairy.proverb) + '”</p></div></div>'
+          : '<button class="fairy-btn" data-act="' + act(v.fairy.follow) + '">' + sp('fairy', 2, false, 'fairy-glow') + '<span><span class="px">A FAIRY HOVERS NEARBY</span><br>Follow its light for a hint and a proverb' + (v.dareHere ? ' (ends the jaguar dare)' : '') + '</span></button>') : '';
+        main += fairy + (v.tipOpen ? '<div class="toucan-row">' + sp('toucan', 4) + '<div class="bubble"><span class="px">TOUCAN SAYS</span><p>' + esc(v.tip) + '</p></div></div>' : '') +
           (v.dareHere && !v.tipOpen ? '<div class="dare-tag">' + sp('jaguar', 2) + '<span>The jaguar is watching: asking the toucan ends the dare.</span></div>' : '') +
           '<button class="hint-btn" aria-expanded="' + v.tipOpen + '" data-act="' + act(v.toggleTip) + '">' + (v.tipOpen ? '' : sp('toucan', 1)) + esc(v.tipLabel) + '</button>' +
           '<div class="field"><label for="answer">YOUR CARVING</label>' +
@@ -861,7 +864,7 @@
   }
   function curioSheet(wv) {
     var o = wv.curioOpen, body = '';
-    var sprite = { runestone: 'runestone', mist: 'mist', totem: 'totem', toucan: 'toucan', monkey: 'monkey', frog: 'frog', wolf: 'wolf' }[o.kind] || 'runestone';
+    var sprite = { fairy: 'fairy', runestone: 'runestone', mist: 'mist', totem: 'totem', toucan: 'toucan', monkey: 'monkey', frog: 'frog', wolf: 'wolf' }[o.kind] || 'runestone';
     if (o.kind === 'totem' && !o.done) {
       body = '<p class="soft">' + esc(o.text) + '</p><div class="tablet small">' + esc(o.question) + '</div>' +
         '<div class="field"><label for="totem">FROM MEMORY</label><textarea id="totem" class="answer short" data-field="curioDraft" placeholder="What do you remember?">' + esc(wv.curioDraft) + '</textarea></div>' +

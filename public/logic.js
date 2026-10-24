@@ -1117,7 +1117,7 @@ function moonAge(day) {
 }
 function moonPhase(day) {
   var a = moonAge(day);
-  if (a < 1.5 || a > SYNODIC - 1.5) return { key: 'new', name: 'New moon', effect: 'Rune blessings count twice tonight.' };
+  if (a < 1.5 || a > SYNODIC - 1.5) return { key: 'new', name: 'New moon', effect: 'Fairies carry light through the jungle: hints and proverbs on the trails. Rune blessings count twice.' };
   if (Math.abs(a - SYNODIC / 2) <= 1.0) return { key: 'full', name: 'Full moon', effect: 'A wolf prowls the atlas. Find it for moonstone shards.' };
   if (a < SYNODIC / 2) return { key: 'waxing', name: 'Waxing moon', effect: '' };
   return { key: 'waning', name: 'Waning moon', effect: '' };
@@ -1186,6 +1186,9 @@ function curiositiesFor(day, region, weatherKey) {
     var h = hashStr(day + ':' + region.key + ':' + k);
     out.push({ id: region.key + ':' + k, kind: CURIO_KINDS[h % CURIO_KINDS.length], slot: (h >>> 8) % 100 });
   }
+  if (moonPhase(day).key === 'new' && hashStr('fairy:' + day + ':' + region.key) % 10 < 6) {
+    out.push({ id: region.key + ':fairy', kind: 'fairy', slot: (hashStr('fairyslot:' + day + region.key) >>> 4) % 100 });
+  }
   if (moonPhase(day).key === 'full' && REGIONS[hashStr('wolf:' + day) % REGIONS.length].key === region.key) {
     out.push({ id: region.key + ':wolf', kind: 'wolf', slot: 50 });
   }
@@ -1195,13 +1198,92 @@ function wolfRegion(day) { return moonPhase(day).key === 'full' ? REGIONS[hashSt
 
 var MURMURS = ['every loop is a promise to stop', 'the answer was in the input all along', 'count before you sort', 'the empty case is a case',
   'what you store now, you will not recompute', 'trust the recursion one level down', 'draw it before you code it', 'two pointers, one truth'];
+// New-moon fairies: a hint about the technique, and a proverb to walk with. One set per gem family.
+var FAIRY_LORE = {
+  'Arrays & hashing': {
+    hints: ['Is there something you keep searching for again and again? Remember it once, in a map, and ask the map instead.',
+      'Before sorting or nesting loops, ask what you would need to know about the numbers you have already passed.'],
+    proverbs: ['The traveller who marks every tree never walks the same path twice.', 'A good memory is a shortcut through the forest.', 'Count the leaves before you argue about the tree.']
+  },
+  'Math & bits': {
+    hints: ['Write out the first few cases by hand. The pattern often shows itself before the proof does.',
+      'Think in bits: what does XOR, AND or a shift do to each digit on its own?'],
+    proverbs: ['Small stones, counted carefully, tell you the height of the mountain.', 'What cancels itself leaves only the truth behind.', 'Every river is made of single drops.']
+  },
+  'Stack & queue': {
+    hints: ['What is still waiting for its answer? Keep the unfinished ones on a stack, newest on top.',
+      'If order of arrival matters, line them up in a queue; if only the latest matters, stack them.'],
+    proverbs: ['The last basket on the pile is the first one you lift.', 'A promise left open must be closed in the order it was made.', 'The patient vine waits until the taller tree falls.']
+  },
+  'Two pointers & window': {
+    hints: ['Can two scouts start at different places and close in, so each step rules something out for good?',
+      'Grow the window while it is valid; shrink it from the left the moment it is not.'],
+    proverbs: ['Two paddlers on one river reach the bank sooner than one.', 'Look through the window you have, not the one you wish you had.', 'When the canoe tips, shift your weight, not your destination.']
+  },
+  'Greedy & intervals': {
+    hints: ['Sort first. Then ask which choice, taken right now, can never be regretted later.',
+      'For intervals, sort by start (or end) and compare each one only with the last one you kept.'],
+    proverbs: ['Pick the ripest fruit within reach, and the basket fills itself.', 'Overlapping shadows make one shade.', 'The path that ends earliest leaves the most daylight.']
+  },
+  'Binary search': {
+    hints: ['Is there a yes/no question whose answer flips only once? Search for the flip, halving each time.',
+      'Write down what is always true about lo and hi before you move either of them.'],
+    proverbs: ['Half the jungle is always the wrong half.', 'Ask the river which way it flows, then cut the map in two.', 'The careful guide checks the edges before the middle.']
+  },
+  'Linked list': {
+    hints: ['A dummy head before the first node saves you from special cases at the start.',
+      'Two walkers at different speeds can find the middle, or a loop, without counting.'],
+    proverbs: ['Hold the next vine before you let go of this one.', 'The swift runner and the slow walker meet only on a circular path.', 'A chain is only rearranged one link at a time.']
+  },
+  'Trees & BST': {
+    hints: ['Trust the recursion: assume each child already returns the right answer, then combine.',
+      'In a search tree, left is smaller and right is larger. Which half can you ignore?'],
+    proverbs: ['Every great tree is a root holding two smaller trees.', 'The leaves answer first; the trunk speaks last.', 'Climb down to the base case before you climb up with the answer.']
+  },
+  'Heap': {
+    hints: ['If you only ever need the smallest (or largest) so far, a heap hands it to you without sorting everything.',
+      'For the top k, keep a heap of size k and let the weakest fall out.'],
+    proverbs: ['The lightest bubble always rises to the top of the pool.', 'A small boat carries only the k strongest paddlers.', 'You need not rank the whole tribe to find its chief.']
+  },
+  'Backtracking': {
+    hints: ['Choose, explore, un-choose. What is the choice at each step, and when do you stop?',
+      'Prune early: if a partial path can already never work, turn back before going deeper.'],
+    proverbs: ['Walk into the cave, but leave a trail of stones to find your way out.', 'The wise explorer turns back at the first dead end.', 'Every fork in the path is a question; answer them one by one.']
+  },
+  'Graphs': {
+    hints: ['Mark a place as visited the moment you add it to your list, not when you leave it.',
+      'Need the fewest steps? Spread out level by level, like ripples, with a queue.'],
+    proverbs: ['A map that forgets where you have been sends you in circles.', 'Ripples reach the nearest shore first.', 'Every island is one walk away from all its shores.']
+  },
+  'Dynamic programming': {
+    hints: ['What is the smallest version of this problem? Write its answer, then say how one step bigger uses it.',
+      'If the same question keeps coming back, write its answer down the first time.'],
+    proverbs: ['The harvest of tomorrow is planted with the answers of today.', 'Never climb the same hill twice to see the same view.', 'Great rivers are built from small streams you have already measured.']
+  },
+  'Trie': {
+    hints: ['Words that share a beginning can share a path. Walk one letter per step.',
+      'Mark where a word ends, so a prefix is not mistaken for a whole word.'],
+    proverbs: ['Paths that start together branch only where they must.', 'A trail of letters leads to every word in the forest.', 'Mark the end of the path, or travellers never know they have arrived.']
+  },
+  'Segment tree': {
+    hints: ['Split the range in halves; each node stores the answer for its half.',
+      'An update touches only the nodes on the way from one leaf to the root.'],
+    proverbs: ['The elder knows the whole valley because each child knows a part.', 'Change one stone, and only the path above it needs mending.', 'Ask the hill, not every pebble on it.']
+  }
+};
+function fairyLore(fam, seed) {
+  var l = FAIRY_LORE[fam] || FAIRY_LORE['Arrays & hashing'];
+  return { hint: l.hints[seed % l.hints.length], proverb: l.proverbs[(seed >>> 3) % l.proverbs.length] };
+}
+// On a new-moon night you are likely (7 in 10) to meet a fairy on any trail.
+function fairyOnTrail(day, pid) { return moonPhase(day).key === 'new' && hashStr('fairy:' + day + ':' + pid) % 10 < 7; }
 var ANIMAL_LINES = {
   toucan: ['A TOUCAN SWOOPS', 'It drops something shiny from its beak and squawks off into the canopy.'],
   monkey: ['A MONKEY CHATTERS', 'It tosses you a shard it found in the ruins, then steals your banana.'],
   frog: ['A FROG CROAKS', 'Under the lily pad where it sat, a shard glints.']
 };
-var CURIO_SPRITE = { runestone: 'runestone', mist: 'mist', totem: 'totem', toucan: 'toucan', monkey: 'monkey', frog: 'frog', wolf: 'wolf' };
-var CURIO_LABEL = { runestone: 'Humming runestone', mist: 'Murmuring land', totem: 'Strange totem', toucan: 'Rustling leaves', monkey: 'Chattering above', frog: 'Croaking pond', wolf: 'Moon wolf' };
+var CURIO_SPRITE = { fairy: 'fairy', runestone: 'runestone', mist: 'mist', totem: 'totem', toucan: 'toucan', monkey: 'monkey', frog: 'frog', wolf: 'wolf' };
+var CURIO_LABEL = { fairy: 'Fairy light', runestone: 'Humming runestone', mist: 'Murmuring land', totem: 'Strange totem', toucan: 'Rustling leaves', monkey: 'Chattering above', frog: 'Croaking pond', wolf: 'Moon wolf' };
 
 class Component extends DCLogic {
   st() {
@@ -1210,7 +1292,7 @@ class Component extends DCLogic {
       gain: 0, reviewed: false, fresh: {}, unlocks: [], filter: 'all', shards: {}, shardGain: [], fused: [], questDone: {}, questGain: 0,
       questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0,
       runes: { carved: {} }, review: {}, dare: null, peek: null, hintUsed: false, practice: false, encounter: null,
-      ruinOpen: null, ruinDraft: '', ruinResult: null, frogDraft: '', dareResult: null, blessGain: 0,
+      ruinOpen: null, ruinDraft: '', ruinResult: null, frogDraft: '', dareResult: null, blessGain: 0, fairyOpen: false,
       bonusGold: 0, curio: null, hail: null, sayings: [], place: null, atlasRegion: null, templePick: null, curioOpen: null, curioDraft: '', goldGain: 0, sunGold: 0
     }, this.state || {});
   }
@@ -1226,7 +1308,7 @@ class Component extends DCLogic {
     this.cue('rustle');
     this.setState({ screen: 'walk', pid: pid, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', reviewed: false, gain: 0,
       unlocks: [], fresh: fresh, shardGain: [], fused: [], questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0,
-      hintUsed: false, practice: !!practice, encounter: null, frogDraft: '', dareResult: null, blessGain: 0, goldGain: 0, sunGold: 0, templePick: null, curioOpen: null });
+      hintUsed: false, fairyOpen: false, practice: !!practice, encounter: null, frogDraft: '', dareResult: null, blessGain: 0, goldGain: 0, sunGold: 0, templePick: null, curioOpen: null });
   }
 
   // Called by the page after the tests ran. report: { passed, total, ms, fail, fatal, logs }
@@ -1418,7 +1500,16 @@ class Component extends DCLogic {
     var res = { id: id, kind: c.kind };
     var gems = Object.assign({}, s.gems), shards = Object.assign({}, s.shards), fused = [];
     var patch = {};
-    if (c.kind === 'runestone') {
+    if (c.kind === 'fairy') {
+      var lore = fairyLore(fam, h);
+      var says = (s.sayings || []).filter(function (x) { return x.say !== lore.proverb; });
+      says.unshift({ g: '✦', n: 'Fairy', say: lore.proverb, day: today });
+      patch.sayings = says.slice(0, 40);
+      fused = giveShards(gems, shards, fam, 1);
+      Object.assign(res, { title: 'A NEW-MOON FAIRY', glyph: '✦', text: 'Its light falls on the ' + SHORT[fam].replace(' ★', '').toLowerCase() + ' trails: ' + lore.hint, quote: lore.proverb,
+        reward: '+1 ' + g.name.toLowerCase() + ' shard · proverb kept in your satchel' });
+      this.cue('rune');
+    } else if (c.kind === 'runestone') {
       var rune = RUNES[h % RUNES.length];
       var sayings = (s.sayings || []).filter(function (x) { return x.n !== rune.n; });
       sayings.unshift({ g: rune.g, n: rune.n, say: rune.say, day: today });
@@ -1759,6 +1850,17 @@ class Component extends DCLogic {
       },
       stepNum: Math.min(s.step, total - 1) + 1, stepTotal: total,
       question: stepObj.q, tip: stepObj.tip, insight: stepObj.insight,
+      fairy: (function () {
+        if (!inStep || !fairyOnTrail(today, s.pid)) return null;
+        var lore = fairyLore(p.family, hashStr(today + ':' + s.pid + ':' + s.step));
+        return { open: !!s.fairyOpen, hint: lore.hint, proverb: lore.proverb,
+          follow: function () {
+            var says = (s.sayings || []).filter(function (x) { return x.say !== lore.proverb; });
+            says.unshift({ g: '✦', n: 'Fairy', say: lore.proverb, day: today });
+            self.cue('rune');
+            self.setState({ fairyOpen: true, hintUsed: true, sayings: says.slice(0, 40) });
+          } };
+      })(),
       tipOpen: !!s.tipOpen, tipLabel: s.tipOpen ? 'SHOO THE TOUCAN' : 'ASK THE TOUCAN',
       dareHere: dareHere,
       revealed: !!s.revealed, notRevealed: !s.revealed,
@@ -1777,7 +1879,7 @@ class Component extends DCLogic {
       },
       nextStep: function () {
         var n = s.step + 1;
-        var patch = { step: n, draft: '', revealed: false, tipOpen: false, code: n >= total ? p.starter : s.code };
+        var patch = { step: n, draft: '', revealed: false, tipOpen: false, fairyOpen: false, code: n >= total ? p.starter : s.code };
         // Finishing the quests pays the first share of the gems, once per problem (not on a practice peek).
         if (n >= total && !s.practice && !s.questDone[s.pid] && !s.solved[s.pid]) {
           var part = questPartFor(p);
