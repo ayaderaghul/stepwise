@@ -991,8 +991,8 @@ PROBLEMS = PROBLEMS.concat(TARO).map(function (q) {
 }).sort(function (a, b) { return (a.rank || 1000) - (b.rank || 1000); });
 
 var REWARD = { Easy: 3, Medium: 5, Hard: 8 };
-var BADGE = { Easy: ['#3DDC84', '#0B2A18'], Medium: ['#FFB347', '#3A2000'], Hard: ['#FF5C5C', '#2A0000'] };
-var TAG = { Good: '#3DDC84', Consider: '#4FD6FF', Style: '#C3A6FF', Watch: '#FFB347' };
+var BADGE = { Easy: ['#7BC96F', '#0F2318'], Medium: ['#F2C14E', '#2A1D05'], Hard: ['#C8643B', '#1A0A04'] };
+var TAG = { Good: '#7BC96F', Consider: '#6FE3D2', Style: '#C9A6FF', Watch: '#F2C14E' };
 
 // Gems are paid in two parts: a share for finishing the Socratic quests, the rest for beating the boss
 // (all tests pass). Rare gems only drop from the boss.
@@ -1005,41 +1005,270 @@ function newlyUnlocked(oldGems, oldSolved, gems, solved, fresh) {
   return unlocks;
 }
 
+// ---------------- jungle surprises: daily rune, weather, ruins (spaced review), wild encounters ----------------
+
+// Elder Futhark in its three ætts. Each rune blesses one gem family for the day it is carved.
+var RUNES = [
+  { g: 'ᚠ', n: 'Fehu', m: 'cattle, wealth', fam: 'Dynamic programming', say: 'Wealth is what you can reuse: store what you computed once.' },
+  { g: 'ᚢ', n: 'Uruz', m: 'the aurochs, strength', fam: 'Arrays & hashing', say: 'Brute force is honest strength. Start there, then look for the shortcut.' },
+  { g: 'ᚦ', n: 'Thurisaz', m: 'the thorn', fam: 'Math & bits', say: 'Edge cases are thorns: empty input, one element, everything equal.' },
+  { g: 'ᚨ', n: 'Ansuz', m: 'the voice', fam: 'Backtracking', say: 'Say the plan out loud before you type a single line.' },
+  { g: 'ᚱ', n: 'Raido', m: 'the ride, the journey', fam: 'Two pointers & window', say: 'Every traversal is a journey: know where you start, how you step, and when you stop.' },
+  { g: 'ᚲ', n: 'Kenaz', m: 'the torch', fam: 'Arrays & hashing', say: 'A good name lights the code. Call it complement, not x.' },
+  { g: 'ᚷ', n: 'Gebo', m: 'the gift', fam: 'Stack & queue', say: 'Give your future self a test case before you need it.' },
+  { g: 'ᚹ', n: 'Wunjo', m: 'joy', fam: 'Greedy & intervals', say: 'The joy of O(n): one pass, nothing wasted.' },
+  { g: 'ᚺ', n: 'Hagalaz', m: 'hail, disruption', fam: 'Greedy & intervals', say: 'When input arrives in a storm, sort it first.' },
+  { g: 'ᚾ', n: 'Naudiz', m: 'need', fam: 'Arrays & hashing', say: 'Need picks the structure: fast lookup needs a hash.' },
+  { g: 'ᛁ', n: 'Isa', m: 'ice, stillness', fam: 'Binary search', say: 'Freeze the loop: write down the invariant that never melts.' },
+  { g: 'ᛃ', n: 'Jera', m: 'the year, the harvest', fam: 'Dynamic programming', say: 'Small answers compound: today’s subproblem is tomorrow’s harvest.' },
+  { g: 'ᛇ', n: 'Eihwaz', m: 'the yew tree', fam: 'Trees & BST', say: 'Every tree is a root and two smaller trees.' },
+  { g: 'ᛈ', n: 'Perthro', m: 'the lot cup, chance', fam: 'Heap', say: 'When in doubt, pick a random pivot.' },
+  { g: 'ᛉ', n: 'Algiz', m: 'the elk, protection', fam: 'Backtracking', say: 'Guard the base case first; the recursion stands on it.' },
+  { g: 'ᛊ', n: 'Sowilo', m: 'the sun', fam: 'Graphs', say: 'Light the whole graph: visit, mark, move on.' },
+  { g: 'ᛏ', n: 'Tiwaz', m: 'Tyr, fairness', fam: 'Two pointers & window', say: 'Be fair to both ends: two pointers, one rule for who moves.' },
+  { g: 'ᛒ', n: 'Berkano', m: 'the birch, growth', fam: 'Stack & queue', say: 'Push what you cannot answer yet; pop it when you can.' },
+  { g: 'ᛖ', n: 'Ehwaz', m: 'the horse, partnership', fam: 'Linked list', say: 'Two pointers ride together: one fast, one slow.' },
+  { g: 'ᛗ', n: 'Mannaz', m: 'humankind', fam: 'Math & bits', say: 'Code is read by people. Make the next reader’s walk easy.' },
+  { g: 'ᛚ', n: 'Laguz', m: 'water, the lake', fam: 'Heap', say: 'Like a bubble in a lake, the smallest rises to the top of a min-heap.' },
+  { g: 'ᛜ', n: 'Ingwaz', m: 'the seed', fam: 'Dynamic programming', say: 'Plant the recursion with a tiny case and let it grow.' },
+  { g: 'ᛞ', n: 'Dagaz', m: 'day, dawn', fam: 'Binary search', say: 'Halve the darkness each step until only the answer is left.' },
+  { g: 'ᛟ', n: 'Othala', m: 'home, heritage', fam: 'Linked list', say: 'Every node remembers where it came from: keep a pointer back.' }
+];
+var AETT_NAMES = ['FREYR’S ÆTT', 'HEIMDALL’S ÆTT', 'TYR’S ÆTT'];
+var WEATHER = {
+  monsoon: { key: 'monsoon', title: 'MONSOON', effect: 'Shards fall double today.', sprite: 'leaf', color: '#6FA8E3', bg: '#122533' },
+  fireflies: { key: 'fireflies', title: 'FIREFLY NIGHT', effect: 'Wild encounters are twice as likely.', sprite: 'firefly', color: '#C8F25A', bg: '#1E2A12' },
+  clear: { key: 'clear', title: 'CLEAR SKIES', effect: 'Jaguar dares pay triple.', sprite: 'flower', color: '#F2C14E', bg: '#2A2412' }
+};
+var REVIEW_DAYS = [1, 3, 7, 14, 30];
+var ANIMALS = {
+  toucan: { sprite: 'toucan', color: '#F28C28', bg: '#2A1E12' },
+  jaguar: { sprite: 'jaguar', color: '#E3A13B', bg: '#2A2312' },
+  frog: { sprite: 'frog', color: '#7BC96F', bg: '#16301F' },
+  monkey: { sprite: 'monkey', color: '#C08A55', bg: '#26190F' }
+};
+
+function localDay(d) {
+  d = d || new Date();
+  var m = d.getMonth() + 1, day = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+}
+function addDays(day, n) { var d = new Date(day + 'T12:00:00'); d.setDate(d.getDate() + n); return localDay(d); }
+function daysBetween(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000); }
+function hashStr(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function pick(list) { return list[Math.floor(Math.random() * list.length)]; }
+
+// Same weather for everyone on a given day: 40% calm, 20% each of the others.
+function weatherFor(day) {
+  var r = hashStr('weather:' + day) % 10;
+  return r < 4 ? null : r < 6 ? WEATHER.monsoon : r < 8 ? WEATHER.fireflies : WEATHER.clear;
+}
+// Today's rune: the one carved today, else a not-yet-carved rune chosen by the date.
+function runeIndexFor(day, runes) {
+  if (runes && runes.today === day && typeof runes.todayIndex === 'number') return runes.todayIndex;
+  var carved = (runes && runes.carved) || {};
+  var open = [];
+  for (var i = 0; i < RUNES.length; i++) if (!(i in carved)) open.push(i);
+  if (!open.length) for (var j = 0; j < RUNES.length; j++) open.push(j);
+  return open[hashStr('rune:' + day) % open.length];
+}
+function blessedFamily(day, runes) {
+  return runes && runes.today === day ? RUNES[runes.todayIndex].fam : null;
+}
+// Adds shards; every five fuse into a gem. Returns the names of gems fused.
+function giveShards(gems, shards, fam, n) {
+  var fused = [];
+  shards[fam] = (shards[fam] || 0) + n;
+  while (shards[fam] >= SHARDS_PER_GEM) { shards[fam] -= SHARDS_PER_GEM; gems[fam] = (gems[fam] || 0) + 1; fused.push(GEMS[fam].name.toUpperCase()); }
+  return fused;
+}
+function commonFamilies() { return GEM_ORDER.filter(function (f) { return !GEMS[f].rare; }); }
+
 class Component extends DCLogic {
   st() {
-    return Object.assign({ screen: 'feed', pid: 0, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', saved: {}, solved: {}, gems: {}, gain: 0, reviewed: false, fresh: {}, unlocks: [], filter: 'all', shards: {}, shardGain: [], fused: [], questDone: {}, questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0 }, this.state || {});
+    return Object.assign({
+      screen: 'feed', pid: 0, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', saved: {}, solved: {}, gems: {},
+      gain: 0, reviewed: false, fresh: {}, unlocks: [], filter: 'all', shards: {}, shardGain: [], fused: [], questDone: {}, questGain: 0,
+      questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0,
+      runes: { carved: {} }, review: {}, dare: null, peek: null, hintUsed: false, practice: false, encounter: null,
+      ruinOpen: null, ruinDraft: '', ruinResult: null, frogDraft: '', dareResult: null, blessGain: 0
+    }, this.state || {});
   }
-  start(pid) {
+  // Sound cues for the page to play after a state change.
+  cue(name) { (this._cues = this._cues || []).push(name); }
+  takeCues() { var c = this._cues || []; this._cues = []; return c; }
+  today() { return localDay(); }
+
+  start(pid, practice) {
     var fresh = Object.assign({}, this.st().fresh); delete fresh[pid];
-    this.setState({ screen: 'walk', pid: pid, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', reviewed: false, gain: 0, unlocks: [], fresh: fresh, shardGain: [], fused: [], questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0 });
+    this.cue('rustle');
+    this.setState({ screen: 'walk', pid: pid, step: 0, draft: '', answers: [], revealed: false, tipOpen: false, code: '', reviewed: false, gain: 0,
+      unlocks: [], fresh: fresh, shardGain: [], fused: [], questGain: 0, questUnlocks: [], judging: false, report: null, bossTries: 0, questShare: 0,
+      hintUsed: false, practice: !!practice, encounter: null, frogDraft: '', dareResult: null, blessGain: 0 });
   }
+
   // Called by the page after the tests ran. report: { passed, total, ms, fail, fatal, logs }
   bossResult(report) {
     var s = this.st();
     var p = PROBLEMS[s.pid];
+    var today = this.today();
     var allPassed = !report.fatal && report.total > 0 && report.passed === report.total;
-    if (!allPassed) { this.setState({ judging: false, report: report, bossTries: s.bossTries + 1 }); return; }
+    if (!allPassed) { this.cue('block'); this.setState({ judging: false, report: report, bossTries: s.bossTries + 1 }); return; }
+    if (s.practice) { this.cue('rustle'); this.setState({ judging: false, report: report, reviewed: true, gain: 0, questShare: 0 }); return; }
+
+    var weather = weatherFor(today);
+    var shardMult = weather === WEATHER.monsoon ? 2 : 1;
     var first = !s.solved[s.pid];
     var g = first ? rewardFor(p) - (s.questDone[s.pid] ? questPartFor(p) : 0) : 0;
+
+    // The jaguar's dare: no hints on this problem → the boss share is doubled (tripled under clear skies).
+    var dare = s.dare, dareResult = null;
+    if (dare && dare.pid === s.pid && first) {
+      if (!s.hintUsed) { var mult = weather === WEATHER.clear ? 3 : 2; g = g * mult; dareResult = 'Dare won: the guardian paid ×' + mult + '.'; }
+      else dareResult = 'The jaguar saw you ask the toucan. Dare over — nothing lost.';
+      dare = null;
+    }
+
     var solved = Object.assign({}, s.solved); solved[s.pid] = true;
     var gems = Object.assign({}, s.gems); gems[p.family] = (gems[p.family] || 0) + g;
     var shards = Object.assign({}, s.shards);
-    var shardGain = [], fused = [];
-    if (first) shardFamilies(p).forEach(function (f) {
-      shards[f] = (shards[f] || 0) + 1;
-      shardGain.push(GEMS[f].name.toLowerCase());
-      if (shards[f] >= SHARDS_PER_GEM) { shards[f] -= SHARDS_PER_GEM; gems[f] = (gems[f] || 0) + 1; fused.push(GEMS[f].name.toUpperCase()); }
-    });
+    var shardGain = [], fused = [], blessGain = 0;
+    if (first) {
+      shardFamilies(p).forEach(function (f) {
+        fused = fused.concat(giveShards(gems, shards, f, shardMult));
+        shardGain.push(GEMS[f].name.toLowerCase() + (shardMult > 1 ? ' ×' + shardMult : ''));
+      });
+      if (blessedFamily(today, s.runes) === p.family && !GEMS[p.family].rare) {
+        blessGain = shardMult;
+        fused = fused.concat(giveShards(gems, shards, p.family, shardMult));
+      }
+    }
+    var review = Object.assign({}, s.review);
+    if (first) review[s.pid] = { stage: 0, cleared: today, due: addDays(today, REVIEW_DAYS[0]) };
+
     var fresh = Object.assign({}, s.fresh);
     var unlocks = newlyUnlocked(s.gems, s.solved, gems, solved, fresh);
-    // questShare: what the quests already paid for this problem, so the clear screen can show the full reward.
     var questShare = first && s.questDone[s.pid] ? questPartFor(p) : 0;
-    this.setState({ judging: false, report: report, reviewed: true, solved: solved, gems: gems, gain: g, questShare: questShare, unlocks: unlocks, fresh: fresh, shards: shards, shardGain: shardGain, fused: fused });
+
+    var encounter = null;
+    if (first) {
+      var chance = weather === WEATHER.fireflies ? 0.66 : 0.33;
+      if (Math.random() < chance) encounter = this.rollEncounter(s.pid, gems, solved, dare);
+    }
+
+    if (GEMS[p.family].rare && g > 0) this.cue('rare'); else if (g + questShare > 0) this.cue('gem');
+    if (shardGain.length || blessGain) this.cue('shard');
+    if (unlocks.length) this.cue('door');
+    this.setState({ judging: false, report: report, reviewed: true, solved: solved, gems: gems, gain: g, questShare: questShare, unlocks: unlocks,
+      fresh: fresh, shards: shards, shardGain: shardGain, fused: fused, review: review, dare: dare, dareResult: dareResult, encounter: encounter,
+      blessGain: blessGain });
   }
+
+  rollEncounter(pid, gems, solved, dare) {
+    var today = this.today();
+    var options = [];
+    options.push({ w: 35, e: { kind: 'toucan', fam: pick(commonFamilies()) } });
+    var open = [], done = [], sealed = [];
+    PROBLEMS.forEach(function (q, i) {
+      if (i === pid) return;
+      if (solved[i]) done.push(i);
+      else if (isLocked(q, gems, solved)) sealed.push(i);
+      else if (!GEMS[q.family].rare) open.push(i);
+    });
+    if (open.length && !dare) options.push({ w: 25, e: { kind: 'jaguar', target: pick(open) } });
+    if (done.length) { var d = pick(done); options.push({ w: 25, e: { kind: 'frog', target: d, step: Math.floor(Math.random() * PROBLEMS[d].steps.length) } }); }
+    if (sealed.length) options.push({ w: 15, e: { kind: 'monkey', target: pick(sealed) } });
+    var total = options.reduce(function (n, o) { return n + o.w; }, 0), r = Math.random() * total;
+    for (var k = 0; k < options.length; k++) { r -= options[k].w; if (r < 0) return Object.assign({ day: today, done: false, msg: '' }, options[k].e); }
+    return Object.assign({ day: today, done: false, msg: '' }, options[0].e);
+  }
+
+  encounterAction(choice) {
+    var s = this.st(), e = s.encounter;
+    if (!e || e.done) return;
+    var today = this.today();
+    var mult = weatherFor(today) === WEATHER.monsoon ? 2 : 1;
+    var next = Object.assign({}, e, { done: true });
+    var patch = { encounter: next };
+    if (e.kind === 'toucan') {
+      var gems = Object.assign({}, s.gems), shards = Object.assign({}, s.shards);
+      var fused = giveShards(gems, shards, e.fam, mult);
+      patch.gems = gems; patch.shards = shards;
+      next.msg = '+' + mult + ' ' + GEMS[e.fam].name.toLowerCase() + ' shard' + (mult > 1 ? 's' : '') + (fused.length ? ' — five shards fused into a gem!' : '.');
+      this.cue('shard');
+    } else if (e.kind === 'jaguar') {
+      if (choice === 'accept') {
+        patch.dare = { pid: e.target, day: today };
+        next.msg = 'Dare accepted. Clear ' + PROBLEMS[e.target].title + ' without the toucan.';
+        this.cue('carve');
+      } else next.msg = 'The jaguar wanders off into the trees.';
+    } else if (e.kind === 'frog') {
+      var answer = (s.frogDraft || '').trim();
+      if (!answer) { return; }
+      var q = PROBLEMS[e.target];
+      var gems2 = Object.assign({}, s.gems), shards2 = Object.assign({}, s.shards);
+      giveShards(gems2, shards2, q.family, mult);
+      patch.gems = gems2; patch.shards = shards2; patch.frogDraft = '';
+      next.answer = answer;
+      next.msg = '+' + mult + ' ' + GEMS[q.family].name.toLowerCase() + ' shard' + (mult > 1 ? 's' : '') + '. Ribbit.';
+      this.cue('shard');
+    } else if (e.kind === 'monkey') {
+      if (choice === 'accept') {
+        patch.peek = { pid: e.target, day: today };
+        next.msg = 'Today you can peek inside ' + PROBLEMS[e.target].title + ' from the trail. Practice only.';
+        this.cue('door');
+      } else next.msg = 'The monkey shrugs and swings away.';
+    }
+    this.setState(patch);
+  }
+
+  carveRune() {
+    var s = this.st(), today = this.today();
+    if (s.runes && s.runes.today === today) return;
+    var i = runeIndexFor(today, s.runes);
+    var carved = Object.assign({}, (s.runes && s.runes.carved) || {}); carved[i] = today;
+    this.cue('rune');
+    this.setState({ runes: { carved: carved, today: today, todayIndex: i } });
+  }
+
+  dueRuins() {
+    var s = this.st(), today = this.today();
+    var out = [];
+    PROBLEMS.forEach(function (q, i) {
+      if (!s.solved[i] || GEMS[q.family].rare) return;
+      var r = s.review[i] || { stage: 0, due: today };
+      if (r.last === today) return;
+      if (r.due <= today) out.push({ pid: i, r: r });
+    });
+    out.sort(function (a, b) { return a.r.due < b.r.due ? -1 : a.r.due > b.r.due ? 1 : a.pid - b.pid; });
+    return out.slice(0, 2);
+  }
+
+  carveRuin() {
+    var s = this.st(), today = this.today();
+    var pid = s.ruinOpen;
+    var answer = (s.ruinDraft || '').trim();
+    if (pid === null || pid === undefined || !answer) return;
+    var q = PROBLEMS[pid];
+    var r = s.review[pid] || { stage: 0, due: today };
+    var step = q.steps[r.stage % q.steps.length];
+    var mult = weatherFor(today) === WEATHER.monsoon ? 2 : 1;
+    var gems = Object.assign({}, s.gems), shards = Object.assign({}, s.shards);
+    var fused = giveShards(gems, shards, q.family, mult);
+    var stage = r.stage + 1;
+    var wait = REVIEW_DAYS[Math.min(stage, REVIEW_DAYS.length - 1)];
+    var review = Object.assign({}, s.review);
+    review[pid] = { stage: stage, cleared: r.cleared, due: addDays(today, wait), last: today };
+    this.cue('carve'); this.cue('shard');
+    this.setState({ gems: gems, shards: shards, review: review, ruinOpen: null, ruinDraft: '',
+      ruinResult: { pid: pid, day: today, question: step.q, answer: answer, insight: step.insight, wait: wait, shards: mult, fused: fused.length > 0 } });
+  }
+
   renderVals() {
     var s = this.st();
     var self = this;
-    var accent = this.props.accent ?? '#FFD23F';
+    var today = this.today();
+    var accent = '#F2C14E';
     var p = PROBLEMS[s.pid];
     var pg = GEMS[p.family];
     var total = p.steps.length;
@@ -1049,12 +1278,14 @@ class Component extends DCLogic {
     var stepObj = p.steps[Math.min(s.step, total - 1)];
     var count = function (topic) { return s.gems[topic] || 0; };
     var totalGems = GEM_ORDER.reduce(function (n, t) { return n + count(t); }, 0);
+    var weather = weatherFor(today);
+    var peekPid = s.peek && s.peek.day === today ? s.peek.pid : null;
+    var darePid = s.dare ? s.dare.pid : null;
 
     var vault = GEM_ORDER.map(function (t) {
       var g = GEMS[t];
       return {
         gem: gemPixels(t, 3), count: count(t), color: g.color, name: g.name,
-        frame: g.rare ? '#FFD23F' : 'transparent', bg: g.rare ? '#2A2150' : 'transparent',
         shardLabel: (s.shards[t] || 0) > 0 ? '◆' + s.shards[t] + '/' + SHARDS_PER_GEM : '',
         dim: count(t) > 0 ? '1' : '0.45',
         label: g.name + ' (' + t + '): ' + count(t)
@@ -1070,28 +1301,27 @@ class Component extends DCLogic {
       var rule = RULES[q.title] || {};
       var drops = shardFamilies(q).map(function (f) { return GEMS[f].name.toLowerCase(); });
       return {
-        title: q.title, topic: q.topic, mono: q.mono, diff: q.diff.toUpperCase(), prompt: q.prompt, example: q.example,
-        meta: q.steps.length + ' quests, then a boss stage',
+        pid: i,
+        title: q.title, topic: q.topic, mono: q.mono, diff: q.diff, prompt: q.prompt, example: q.example,
+        meta: q.steps.length + ' trail markers, then the temple',
         gem: gemPixels(q.family, 2), gemColor: g.color,
         rewardLabel: isSolved ? g.plural + ' collected' : (g.rare ? '+1 ' + g.name.toLowerCase() + ' · RARE'
-          : s.questDone[i] ? '+' + (r - questPartFor(q)) + ' left at the boss' : '+' + r + ' ' + g.plural),
-        cta: isSolved ? 'REPLAY' : 'START ▶',
+          : s.questDone[i] ? '+' + (r - questPartFor(q)) + ' waiting at the temple' : '+' + r + ' ' + g.plural),
+        cta: isSolved ? 'RETURN' : 'ENTER ▶',
         solved: isSolved, family: q.family, isSaved: isSaved,
-        locked: locked, unlocked: !locked, fresh: !!s.fresh[i],
+        locked: locked, fresh: !!s.fresh[i],
+        isDare: darePid === i && !isSolved,
+        canPeek: locked && peekPid === i,
+        peek: function () { self.start(i, true); },
         reqs: reqsFor(q, s.gems, s.solved), lockWhy: locked ? whyFor(q, s.gems, s.solved) : '',
         hasBuilds: !!(rule.after && rule.after.length), buildsOn: (rule.after || []).join(' + '),
         hasShards: drops.length > 0, shardNames: drops.join(', '),
-        titleColor: locked ? '#B9B4D6' : '#F4F1E8',
-        borderStyle: locked ? 'dashed' : 'solid',
-        frame: isSolved ? '#3DDC84' : (s.fresh[i] ? '#FFD23F' : '#3A3770'),
-        badgeBg: BADGE[q.diff][0], badgeFg: BADGE[q.diff][1],
-        saveFill: isSaved ? accent : '#3A3770',
-        saveLabel: isSaved ? 'Remove from saved' : 'Save for later',
+        saveLabel: isSaved ? 'Unmark this trail' : 'Mark this trail for later',
         open: function () { self.start(i); },
-        toggleSave: function () { var m = Object.assign({}, s.saved); m[i] = !isSaved; self.setState({ saved: m }); }
+        toggleSave: function () { var m = Object.assign({}, s.saved); m[i] = !isSaved; self.cue('rustle'); self.setState({ saved: m }); }
       };
     });
-    // Open quests first, locked ones after, so the feed reads as "what you can do now".
+    // Open trails first, sealed temples after, so the feed reads as "what you can do now".
     posts = posts.filter(function (x) { return !x.locked; }).concat(posts.filter(function (x) { return x.locked; }));
     var allCount = posts.length;
     if (s.filter === 'saved') posts = posts.filter(function (x) { return x.isSaved; });
@@ -1099,97 +1329,179 @@ class Component extends DCLogic {
     var solvedCount = Object.keys(s.solved).length;
     var chipKeys = ['all'].concat(GEM_ORDER.filter(function (f) { return PROBLEMS.some(function (q) { return q.family === f; }); }));
     var chips = chipKeys.map(function (k) {
-      var on = s.filter === k;
       var n = k === 'all' ? PROBLEMS.length : PROBLEMS.filter(function (q) { return q.family === k; }).length;
+      return { label: (k === 'all' ? 'ALL' : SHORT[k]) + ' ' + n, on: s.filter === k, pick: function () { self.cue('rustle'); self.setState({ filter: k }); } };
+    });
+    var feedCount = (s.filter === 'all' ? 'Taro 75 + 3 bonus' : s.filter === 'saved' ? 'Marked trails' : s.filter) + ' · ' + posts.length + ' of ' + allCount + ' trails · ' + solvedCount + (solvedCount === 1 ? ' temple' : ' temples') + ' cleared';
+
+    // Daily rune
+    var ri = runeIndexFor(today, s.runes);
+    var rune = RUNES[ri];
+    var carvedMap = (s.runes && s.runes.carved) || {};
+    var carvedToday = !!(s.runes && s.runes.today === today);
+    var dailyRune = {
+      glyph: rune.g, name: rune.n.toUpperCase(), meaning: rune.m, saying: rune.say,
+      blessing: 'Blessing: ' + SHORT[rune.fam].toLowerCase() + ' clears drop +1 ' + GEMS[rune.fam].name.toLowerCase() + ' shard today',
+      blessSprite: gemPixels(rune.fam, 2),
+      carved: carvedToday, carvedCount: Object.keys(carvedMap).length,
+      carve: function () { self.carveRune(); }
+    };
+    var runestone = [0, 1, 2].map(function (a) {
+      var found = 0;
+      var runes = RUNES.slice(a * 8, a * 8 + 8).map(function (r, k) {
+        var idx = a * 8 + k, have = idx in carvedMap;
+        if (have) found++;
+        return { g: r.g, n: r.n, have: have, today: carvedToday && idx === ri, label: r.n + ' (' + r.m + ')' + (have ? ', carved ' + carvedMap[idx] : ', not yet carved') };
+      });
+      return { title: AETT_NAMES[a], runes: runes, found: found };
+    });
+    var selectedRune = carvedToday ? rune : null;
+
+    // Overgrown ruins (spaced review)
+    var ruins = this.dueRuins().map(function (d) {
+      var q = PROBLEMS[d.pid];
+      var step = q.steps[d.r.stage % q.steps.length];
+      var ago = d.r.cleared ? daysBetween(d.r.cleared, today) : null;
       return {
-        label: (k === 'all' ? 'ALL' : SHORT[k]) + ' ' + n, on: on,
-        bg: on ? accent : '#1F1D45', fg: on ? '#12112A' : '#F4F1E8', border: on ? '#070614' : '#3A3770',
-        pick: function () { self.setState({ filter: k }); }
+        pid: d.pid, title: q.title, gem: gemPixels(q.family, 2), gemColor: GEMS[q.family].color, gemName: GEMS[q.family].name.toLowerCase(),
+        ago: ago === null ? 'cleared a while ago' : ago === 0 ? 'cleared today' : 'cleared ' + ago + ' day' + (ago === 1 ? '' : 's') + ' ago',
+        question: step.q, open: s.ruinOpen === d.pid, draft: s.ruinOpen === d.pid ? s.ruinDraft : '',
+        reward: '+' + (weather === WEATHER.monsoon ? 2 : 1) + ' ' + GEMS[q.family].name.toLowerCase() + ' shard · keeps it shining',
+        openIt: function () { self.cue('rustle'); self.setState({ ruinOpen: d.pid, ruinDraft: '' }); },
+        carve: function () { self.carveRuin(); }
       };
     });
-    var feedCount = (s.filter === 'all' ? 'Taro 75 + 3 bonus' : s.filter === 'saved' ? 'Saved for later' : s.filter) + ' · ' + posts.length + ' of ' + allCount + ' · ' + solvedCount + ' cleared';
+    var rr = s.ruinResult && s.ruinResult.day === today ? s.ruinResult : null;
+    var ruinResult = rr ? {
+      title: PROBLEMS[rr.pid].title, question: rr.question, answer: rr.answer, insight: rr.insight,
+      line: '+' + rr.shards + ' ' + GEMS[PROBLEMS[rr.pid].family].name.toLowerCase() + ' shard' + (rr.shards > 1 ? 's' : '') + (rr.fused ? ' · fused into a gem!' : '') + ' · back in ' + rr.wait + ' day' + (rr.wait === 1 ? '' : 's'),
+      dismiss: function () { self.setState({ ruinResult: null }); }
+    } : null;
+
+    // Wild encounter on the clear screen
+    var enc = null;
+    if (s.encounter && inReview) {
+      var e = s.encounter, a = ANIMALS[e.kind], t = e.target !== undefined ? PROBLEMS[e.target] : null;
+      var base = { kind: e.kind, sprite: a.sprite, color: a.color, bg: a.bg, done: e.done, msg: e.msg, answer: e.answer || '' };
+      if (e.kind === 'toucan') enc = Object.assign(base, {
+        title: 'A TOUCAN DROPS SOMETHING', line: 'It found something shiny by the river.',
+        detail: 'A ' + GEMS[e.fam].name.toLowerCase() + ' shard, just for you.', reward: weather === WEATHER.monsoon ? 'Monsoon: two shards!' : '',
+        primary: { label: 'TAKE IT ▶', act: function () { self.encounterAction('accept'); } } });
+      else if (e.kind === 'jaguar') enc = Object.assign(base, {
+        title: 'A JAGUAR DARES YOU', line: 'Clear a temple without asking the toucan.',
+        detail: 'Dare: ' + t.title + ', no hints.', reward: 'Win: the guardian pays ×' + (weather === WEATHER.clear ? 3 : 2) + '. Lose: nothing.',
+        primary: { label: 'ACCEPT DARE ▶', act: function () { self.encounterAction('accept'); } },
+        secondary: { label: 'NOT TODAY', act: function () { self.encounterAction('decline'); } } });
+      else if (e.kind === 'frog') {
+        var fs = t.steps[e.step];
+        enc = Object.assign(base, {
+          title: 'A FROG ASKS A RIDDLE', line: 'From a temple you already cleared.',
+          detail: t.title + ': ' + fs.q, reward: 'Answer it: +1 ' + GEMS[t.family].name.toLowerCase() + ' shard', insight: fs.insight,
+          needsAnswer: !e.done, draft: s.frogDraft,
+          primary: { label: 'ANSWER ▶', act: function () { self.encounterAction('accept'); } } });
+      } else if (e.kind === 'monkey') enc = Object.assign(base, {
+        title: 'A MONKEY KNOWS A SHORTCUT', line: 'It can sneak you past one sealed door, just for today.',
+        detail: 'Peek inside ' + t.title + '.', reward: 'Practice only. Gems wait until the seal breaks.',
+        primary: { label: 'FOLLOW IT ▶', act: function () { self.encounterAction('accept'); } },
+        secondary: { label: 'NO THANKS', act: function () { self.encounterAction('decline'); } } });
+    }
 
     var segCount = total + 2;
     var pos = inReview ? total + 1 : (inCode ? total : s.step);
-    var segs = [];
-    for (var k = 0; k < segCount; k++) {
-      segs.push({ bg: k < pos ? '#3DDC84' : (k === pos ? accent : '#2A2858') });
-    }
+    var stones = [];
+    for (var k = 0; k < segCount; k++) stones.push({ state: k < pos ? 'done' : k === pos ? 'now' : 'todo', temple: k === segCount - 2 });
 
-    var phaseLabel = inReview ? 'Results' : (inCode ? 'Boss stage' : ('Thinking · ' + p.family + (p.rank ? ' · Taro #' + p.rank : ' · bonus')));
+    var phaseLabel = s.practice ? 'Monkey shortcut · practice run'
+      : inReview ? 'Temple cleared' : (inCode ? 'The temple' : (SHORT[p.family].replace(' ★', '').toLowerCase() + (p.rank ? ' · Taro #' + p.rank : ' · bonus')));
     var noDraft = !s.draft || !s.draft.trim();
     var burst = [];
     var earned = (s.gain || 0) + (s.questShare || 0); // total for this problem: quests + boss
-    for (var b = 0; b < Math.max(earned, 0); b++) burst.push(gemPixels(p.family, pg.rare ? 7 : 5));
+    for (var b = 0; b < Math.max(Math.min(earned, 12), 0); b++) burst.push(gemPixels(p.family, pg.rare ? 7 : 4));
+    var dareHere = darePid === s.pid && !s.solved[s.pid] && !s.practice;
 
     return {
-      accent: accent,
+      today: today,
       totalGems: totalGems,
       vault: vault,
+      weather: weather,
+      dailyRune: dailyRune, runestone: runestone, selectedRune: selectedRune,
+      ruins: ruins, ruinResult: ruinResult,
+      encounter: enc,
       isFeed: s.screen === 'feed',
       isWalk: s.screen === 'walk',
       isStep: inStep, isCode: inCode, isReview: inReview,
-      posts: posts, segs: segs, phaseLabel: phaseLabel, chips: chips, feedCount: feedCount,
+      isPractice: !!s.practice,
+      posts: posts, stones: stones, phaseLabel: phaseLabel, chips: chips, feedCount: feedCount,
       cur: {
-        title: p.title,
+        title: p.title, diff: p.diff, family: p.family,
         gem: gemPixels(p.family, 2), gemColor: pg.color, gemCount: count(p.family),
-        gemLabel: pg.name + 's collected: ' + count(p.family),
-        gemSummary: pg.name + ' is the ' + p.family.toLowerCase() + ' gem · you have ' + count(p.family) + ' · total ' + totalGems
+        gemLabel: pg.name + 's in your satchel: ' + count(p.family),
+        gemSummary: pg.name + ' is the ' + p.family.toLowerCase() + ' gem · you carry ' + count(p.family) + ' · ' + totalGems + ' in all'
       },
       stepNum: Math.min(s.step, total - 1) + 1, stepTotal: total,
       question: stepObj.q, tip: stepObj.tip, insight: stepObj.insight,
-      tipOpen: !!s.tipOpen, tipLabel: s.tipOpen ? 'HIDE HINT' : 'NEED A HINT?',
+      tipOpen: !!s.tipOpen, tipLabel: s.tipOpen ? 'SHOO THE TOUCAN' : 'ASK THE TOUCAN',
+      dareHere: dareHere,
       revealed: !!s.revealed, notRevealed: !s.revealed,
       draft: s.draft, myAnswer: s.answers[s.step] || '',
-      noDraft: noDraft, submitOpacity: noDraft ? '0.45' : '1',
-      continueLabel: s.step === total - 1 ? 'TO THE BOSS ▶' : 'NEXT QUEST ▶',
-      onDraft: function (e) { self.setState({ draft: e.target.value }); },
-      toggleTip: function () { self.setState({ tipOpen: !s.tipOpen }); },
+      noDraft: noDraft,
+      continueLabel: s.step === total - 1 ? 'TO THE TEMPLE ▶' : 'NEXT MARKER ▶',
+      toggleTip: function () {
+        if (!s.tipOpen) self.cue('toucan');
+        self.setState({ tipOpen: !s.tipOpen, hintUsed: s.hintUsed || !s.tipOpen });
+      },
       submitAnswer: function () {
         if (noDraft) return;
         var a = s.answers.slice(); a[s.step] = s.draft.trim();
+        self.cue('carve');
         self.setState({ answers: a, revealed: true });
       },
       nextStep: function () {
         var n = s.step + 1;
         var patch = { step: n, draft: '', revealed: false, tipOpen: false, code: n >= total ? p.starter : s.code };
-        // Finishing the quests pays the first share of the gems, once per problem.
-        if (n >= total && !s.questDone[s.pid] && !s.solved[s.pid]) {
+        // Finishing the quests pays the first share of the gems, once per problem (not on a practice peek).
+        if (n >= total && !s.practice && !s.questDone[s.pid] && !s.solved[s.pid]) {
           var part = questPartFor(p);
           var questDone = Object.assign({}, s.questDone); questDone[s.pid] = true;
           var gems = Object.assign({}, s.gems); gems[p.family] = (gems[p.family] || 0) + part;
           var fresh = Object.assign({}, s.fresh);
           patch.questDone = questDone; patch.gems = gems; patch.questGain = part; patch.fresh = fresh;
           patch.questUnlocks = newlyUnlocked(s.gems, s.solved, gems, s.solved, fresh);
-        }
+          if (part > 0) self.cue('gem');
+          if (patch.questUnlocks.length) self.cue('door');
+        } else self.cue('rustle');
         self.setState(patch);
       },
       plan: p.steps.map(function (st, i) { return { q: st.q, a: s.answers[i] || '—' }; }),
-      code: s.code, onCode: function (e) { self.setState({ code: e.target.value }); },
+      code: s.code,
       // The page sees `judging`, runs the tests, then calls bossResult().
-      submitCode: function () { if (!s.judging) self.setState({ judging: true }); },
+      submitCode: function () { if (!s.judging) { self.cue('carve'); self.setState({ judging: true }); } },
       judging: !!s.judging,
-      bossLabel: s.judging ? 'RUNNING TESTS…' : s.report ? 'RUN TESTS AGAIN ▶' : 'RUN TESTS ▶',
-      bossPrize: s.solved[s.pid] ? 'Already cleared — replaying for practice.'
-        : pg.rare ? 'Beat the boss for the rare ' + pg.name.toLowerCase() + '.'
-        : 'Beat the boss (all tests pass) for +' + (rewardFor(p) - (s.questDone[s.pid] ? questPartFor(p) : 0)) + ' ' + pg.plural + '.',
+      bossLabel: s.judging ? 'THE GUARDIAN JUDGES…' : s.report ? 'FACE THE GUARDIAN AGAIN ▶' : 'FACE THE GUARDIAN ▶',
+      bossPrize: s.practice ? 'Practice run: the seal still holds, so no gems here yet.'
+        : s.solved[s.pid] ? 'Already cleared — this run is for practice.'
+        : pg.rare ? 'Pass every trial for the rare ' + pg.name.toLowerCase() + '.'
+        : 'Pass every trial for +' + (rewardFor(p) - (s.questDone[s.pid] ? questPartFor(p) : 0)) + ' ' + pg.plural + (dareHere ? ' (×' + (weather === WEATHER.clear ? 3 : 2) + ' if the dare holds)' : '') + '.',
       hasQuestGain: s.questGain > 0,
-      questLine: '+' + s.questGain + ' ' + (s.questGain === 1 ? pg.name : pg.plural).toUpperCase() + ' FOR FINISHING THE QUESTS',
+      questLine: '+' + s.questGain + ' ' + (s.questGain === 1 ? pg.name : pg.plural).toUpperCase() + ' FOR THE TRAIL MARKERS',
       questUnlocks: s.questUnlocks, hasQuestUnlocks: s.questUnlocks.length > 0,
       hasReport: !!(s.report && inCode),
       report: s.report,
       bossTries: s.bossTries,
       burst: burst,
-      gainLabel: earned > 0 ? '+' + earned + ' ' + (earned === 1 ? pg.name : pg.plural).toUpperCase() + ' IN TOTAL' : 'ALREADY CLEARED · NO NEW GEMS',
+      gainLabel: s.practice ? 'PRACTICE RUN · THE SEAL STILL HOLDS'
+        : earned > 0 ? '+' + earned + ' ' + (earned === 1 ? pg.name : pg.plural).toUpperCase() + ' IN TOTAL' : 'ALREADY CLEARED · NO NEW GEMS',
       hasSplit: s.questShare > 0 && s.gain > 0,
-      splitLine: s.questShare + ' for the quests (earned earlier) + ' + s.gain + ' for beating the boss',
-      bossTriesLine: s.bossTries > 0 ? 'Cleared after ' + (s.bossTries + 1) + ' tries' : 'Cleared on the first try',
+      splitLine: s.questShare + ' on the trail (earned earlier) + ' + s.gain + ' from the guardian',
+      bossTriesLine: s.bossTries > 0 ? 'Cleared on try ' + (s.bossTries + 1) : 'Cleared on the first try',
+      dareResult: s.dareResult,
+      blessLine: s.blessGain > 0 ? 'Rune blessing: +' + s.blessGain + ' ' + pg.name.toLowerCase() + ' shard' + (s.blessGain > 1 ? 's' : '') : '',
       rareDrop: !!pg.rare && s.gain > 0,
       rv: {
-        tests: s.report ? s.report.passed + ' of ' + s.report.total + ' tests passed · ' + (s.report.ms < 1 ? 'under 1 ms' : s.report.ms + ' ms') : p.review.tests, time: p.review.time, space: p.review.space, followup: p.review.followup,
+        tests: s.report ? s.report.passed + ' of ' + s.report.total + ' trials passed · ' + (s.report.ms < 1 ? 'under 1 ms' : s.report.ms + ' ms') : p.review.tests, time: p.review.time, space: p.review.space, followup: p.review.followup,
         notes: p.review.notes.map(function (n) { return { tag: n.tag.toUpperCase(), text: n.text, tagBg: TAG[n.tag] || TAG.Consider }; })
       },
-      backToFeed: function () { self.setState({ screen: 'feed', reviewed: false }); },
+      backToFeed: function () { self.cue('rustle'); self.setState({ screen: 'feed', reviewed: false, practice: false, encounter: null }); },
       unlocks: s.unlocks, hasUnlocks: s.unlocks.length > 0,
       hasShardGain: s.shardGain.length > 0, shardLine: s.shardGain.join(', '),
       hasFused: s.fused.length > 0, fusedLine: s.fused.join(' + '),
@@ -1198,7 +1510,7 @@ class Component extends DCLogic {
           var j = (s.pid + d) % PROBLEMS.length;
           if (!isLocked(PROBLEMS[j], s.gems, s.solved) && !s.solved[j]) { self.start(j); return; }
         }
-        self.setState({ screen: 'feed', reviewed: false });
+        self.setState({ screen: 'feed', reviewed: false, practice: false, encounter: null });
       }
     };
   }

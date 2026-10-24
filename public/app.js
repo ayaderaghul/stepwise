@@ -1,4 +1,4 @@
-// Renders the game (logic.js) plus the account screens, and syncs progress with the server.
+// Renders the game (logic.js) as a jungle expedition, handles accounts, sync, sounds and the test runner.
 (function () {
   var CACHE_KEY = 'stepwise:v1';
   var TZ = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
@@ -9,13 +9,14 @@
 
   // App-level view state (the game's own screens live in game.state).
   var ui = {
-    view: 'boot',            // boot | auth | game | log | attempt
+    view: 'boot',            // boot | auth | game | satchel | journal | attempt
     user: null,
+    streak: 0,
     auth: { mode: 'login', error: '', busy: false, inviteRequired: true },
     log: { loading: false, stats: null, attempts: [], error: '' },
-    attempt: null,           // detail of one past attempt
+    attempt: null,
     notice: '',
-    syncState: 'idle'        // idle | saving | saved | offline
+    syncState: 'idle'
   };
 
   // ---------------- server calls ----------------
@@ -43,14 +44,17 @@
   }
 
   // ---------------- progress sync ----------------
+  var SAVED_KEYS = ['solved', 'gems', 'shards', 'saved', 'fresh', 'questDone', 'runes', 'review', 'dare', 'peek'];
   function progressSnapshot() {
-    var s = game.state || {};
-    return { solved: s.solved || {}, gems: s.gems || {}, shards: s.shards || {}, saved: s.saved || {}, fresh: s.fresh || {}, questDone: s.questDone || {} };
+    var s = game.state || {}, out = {};
+    SAVED_KEYS.forEach(function (k) { if (s[k] !== undefined) out[k] = s[k]; });
+    return out;
   }
   function applyProgress(saved) {
-    // Always open on the full feed, whatever filter was last used on another device.
+    // Always open on the full trail, whatever filter was last used on another device.
     game.state = Object.assign({}, game.state, saved || {}, {
-      screen: 'feed', reviewed: false, unlocks: [], shardGain: [], fused: [], gain: 0, filter: 'all', judging: false, report: null
+      screen: 'feed', reviewed: false, unlocks: [], shardGain: [], fused: [], gain: 0, filter: 'all', judging: false, report: null,
+      encounter: null, practice: false, ruinOpen: null, ruinResult: null
     });
   }
   var lastSaved = '';
@@ -71,7 +75,7 @@
     }, 800);
   }
 
-  // Record every boss run (passed or failed), with the answer typed for every question.
+  // Record every guardian run (passed or failed), with the answer carved for every marker.
   var lastReport = null;
   function recordAttemptIfNew() {
     var s = game.state || {};
@@ -99,7 +103,7 @@
     return 'Test ' + ((f.index || 0) + 1) + ': ' + (f.error ? f.error + ' ' : '') + 'input ' + (f.input || '') + ' · expected ' + (f.expected || '') + ' · got ' + (f.got || '');
   }
 
-  // ---------------- boss stage: run the tests in a sandboxed worker ----------------
+  // ---------------- the guardian: run the tests in a sandboxed worker ----------------
   var judgingNow = false;
   var CASE_TIME_LIMIT = 3000;
   function runBossIfNeeded() {
@@ -128,7 +132,7 @@
         timer = setTimeout(function () {
           end({
             total: total || 1, timedOut: true,
-            fail: fail || { index: done, input: '', expected: '', got: '—', error: 'Time limit: test ' + (done + 1) + ' ran for over ' + CASE_TIME_LIMIT / 1000 + ' seconds. An infinite loop, or a much slower algorithm than needed?' }
+            fail: fail || { index: done, input: '', expected: '', got: '—', error: 'Time limit: trial ' + (done + 1) + ' ran for over ' + CASE_TIME_LIMIT / 1000 + ' seconds. An infinite loop, or a much slower algorithm than needed?' }
           });
         }, CASE_TIME_LIMIT);
       }
@@ -161,6 +165,11 @@
       if (r.ok) { ui.auth.inviteRequired = r.data.inviteRequired; render(); }
     });
   }
+  function loadStreak() {
+    api('/stats?tz=' + encodeURIComponent(TZ)).then(function (r) {
+      if (r.ok) { ui.streak = r.data.streak || 0; ui.log.stats = r.data; render(); }
+    });
+  }
   function startSession(username) {
     ui.user = username;
     ui.view = 'boot';
@@ -175,6 +184,7 @@
       lastSaved = server ? JSON.stringify(progressSnapshot()) : '';
       ui.view = 'game';
       render();
+      loadStreak();
       if (useLocal) notify('Brought over the progress saved in this browser.');
     });
   }
@@ -198,20 +208,20 @@
       render();
     });
   }
-  function logout() {
-    api('/logout', { method: 'POST' }).then(signedOut);
-  }
+  function logout() { api('/logout', { method: 'POST' }).then(signedOut); }
 
-  // ---------------- log ----------------
-  function openLog() {
-    ui.view = 'log';
+  // ---------------- journal (log) ----------------
+  function openJournal() {
+    Sfx.play('rustle');
+    ui.view = 'journal';
     ui.log.loading = true; ui.log.error = '';
     render();
     Promise.all([api('/stats?tz=' + encodeURIComponent(TZ)), api('/attempts?limit=50')]).then(function (rs) {
       ui.log.loading = false;
       if (rs[0].status === 401) return signedOut();
-      if (!rs[0].ok || !rs[1].ok) { ui.log.error = (rs[0].data.error || rs[1].data.error || 'Couldn’t load your log.'); render(); return; }
+      if (!rs[0].ok || !rs[1].ok) { ui.log.error = (rs[0].data.error || rs[1].data.error || 'Couldn’t load your journal.'); render(); return; }
       ui.log.stats = rs[0].data;
+      ui.streak = rs[0].data.streak || 0;
       ui.log.attempts = rs[1].data.attempts;
       render();
     });
@@ -219,220 +229,333 @@
   function openAttempt(id) {
     ui.view = 'attempt'; ui.attempt = null; render();
     api('/attempts/' + id).then(function (r) {
-      if (!r.ok) { notify(r.data.error || 'Couldn’t open that attempt.'); ui.view = 'log'; render(); return; }
+      if (!r.ok) { notify(r.data.error || 'Couldn’t open that attempt.'); ui.view = 'journal'; render(); return; }
       ui.attempt = r.data; render();
     });
   }
+  function openSatchel() { Sfx.play('rustle'); ui.view = 'satchel'; render(); }
+  function showFamily(fam) { Sfx.play('rustle'); ui.view = 'game'; game.setState({ screen: 'feed', filter: fam }); }
 
   // ---------------- helpers ----------------
   function esc(v) {
     return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   }
   function act(fn) { actions.push(fn); return actions.length - 1; }
-  function gem(g, extraClass) {
+  function px(g, extraClass) {
     if (!g || !g.cells || !g.cells.length) return '';
     var cells = g.cells.map(function (c) {
-      return '<i class="' + (c.cls || '') + '" style="background:' + c.bg + ';animation-delay:' + (c.d || '0s') + '"></i>';
+      return '<i class="' + (c.cls || '') + '" style="background:' + c.bg + (c.d ? ';animation-delay:' + c.d : '') + '"></i>';
     }).join('');
     return '<div class="gem ' + (g.fx || '') + ' ' + (extraClass || '') + '" aria-hidden="true" style="grid-template-columns:repeat(' + g.w + ',' + g.px + 'px);grid-auto-rows:' + g.px + 'px">' +
       cells + (g.rare ? '<span class="twinkle"></span>' : '') + '</div>';
   }
+  function sp(kind, size, flip, extraClass) { return px(spritePixels(kind, size, flip), extraClass); }
+  function deco(kind, size, flip, style) { return '<div class="deco" aria-hidden="true" style="' + style + '">' + sp(kind, size, flip) + '</div>'; }
+  function runeStrip(text) { return '<div class="rune-strip" aria-hidden="true">' + text + '</div>'; }
   function when(iso) {
     try { return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); } catch (e) { return iso; }
   }
+  var RUNE_ROW = 'ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛇᛈᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ';
+  var BADGE_CLASS = { Easy: 'easy', Medium: 'medium', Hard: 'hard' };
   var ICON = {
-    back: '<svg width="15" height="15" viewBox="0 0 5 5" shape-rendering="crispEdges" aria-hidden="true"><rect x="2" y="0" width="1" height="1" fill="#F4F1E8"/><rect x="1" y="1" width="1" height="1" fill="#F4F1E8"/><rect x="0" y="2" width="5" height="1" fill="#F4F1E8"/><rect x="1" y="3" width="1" height="1" fill="#F4F1E8"/><rect x="2" y="4" width="1" height="1" fill="#F4F1E8"/></svg>',
-    check: '<svg width="15" height="12" viewBox="0 0 5 4" shape-rendering="crispEdges" aria-hidden="true"><rect x="4" y="0" width="1" height="1" fill="#3DDC84"/><rect x="3" y="1" width="1" height="1" fill="#3DDC84"/><rect x="0" y="1" width="1" height="1" fill="#3DDC84"/><rect x="1" y="2" width="2" height="1" fill="#3DDC84"/><rect x="2" y="3" width="1" height="1" fill="#3DDC84"/></svg>',
-    lock: '<svg width="15" height="18" viewBox="0 0 5 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="0" width="3" height="1" fill="#FFD23F"/><rect x="1" y="1" width="1" height="2" fill="#FFD23F"/><rect x="3" y="1" width="1" height="2" fill="#FFD23F"/><rect x="0" y="3" width="5" height="3" fill="#FFD23F"/><rect x="2" y="4" width="1" height="1" fill="#12112A"/></svg>',
-    open: '<svg width="15" height="18" viewBox="0 0 5 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="3" y="0" width="2" height="1" fill="#FFD23F"/><rect x="4" y="1" width="1" height="2" fill="#FFD23F"/><rect x="0" y="3" width="5" height="3" fill="#FFD23F"/><rect x="2" y="4" width="1" height="1" fill="#2A2150"/></svg>',
-    bulb: '<svg width="12" height="18" viewBox="0 0 4 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="0" width="2" height="1" fill="#FFB347"/><rect x="0" y="1" width="4" height="2" fill="#FFB347"/><rect x="1" y="3" width="2" height="1" fill="#FFB347"/><rect x="1" y="5" width="2" height="1" fill="#FFB347"/></svg>',
-    feed: '<svg width="18" height="18" viewBox="0 0 6 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="6" height="2" fill="currentColor"/><rect x="0" y="3" width="6" height="3" fill="currentColor"/></svg>',
-    log: '<svg width="18" height="18" viewBox="0 0 6 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="4" width="1" height="2" fill="currentColor"/><rect x="2" y="2" width="1" height="4" fill="currentColor"/><rect x="4" y="0" width="1" height="6" fill="currentColor"/></svg>',
-    gems: '<svg width="21" height="15" viewBox="0 0 7 5" shape-rendering="crispEdges" aria-hidden="true"><rect x="1" y="0" width="5" height="1" fill="currentColor"/><rect x="0" y="1" width="7" height="2" fill="currentColor"/><rect x="2" y="3" width="3" height="1" fill="currentColor"/><rect x="3" y="4" width="1" height="1" fill="currentColor"/></svg>',
-    flame: '<svg width="18" height="21" viewBox="0 0 6 7" shape-rendering="crispEdges" aria-hidden="true"><rect x="2" y="0" width="1" height="1" fill="#FFB347"/><rect x="2" y="1" width="2" height="1" fill="#FFB347"/><rect x="1" y="2" width="3" height="1" fill="#FFB347"/><rect x="1" y="3" width="4" height="1" fill="#FF7A52"/><rect x="0" y="4" width="6" height="2" fill="#FF7A52"/><rect x="2" y="4" width="2" height="2" fill="#FFD23F"/><rect x="1" y="6" width="4" height="1" fill="#E2552E"/></svg>'
+    back: '<svg width="15" height="15" viewBox="0 0 5 5" shape-rendering="crispEdges" aria-hidden="true"><rect x="2" y="0" width="1" height="1" fill="#F2EBD3"/><rect x="1" y="1" width="1" height="1" fill="#F2EBD3"/><rect x="0" y="2" width="5" height="1" fill="#F2EBD3"/><rect x="1" y="3" width="1" height="1" fill="#F2EBD3"/><rect x="2" y="4" width="1" height="1" fill="#F2EBD3"/></svg>',
+    check: '<svg width="15" height="12" viewBox="0 0 5 4" shape-rendering="crispEdges" aria-hidden="true"><rect x="4" y="0" width="1" height="1" fill="#7BC96F"/><rect x="3" y="1" width="1" height="1" fill="#7BC96F"/><rect x="0" y="1" width="1" height="1" fill="#7BC96F"/><rect x="1" y="2" width="2" height="1" fill="#7BC96F"/><rect x="2" y="3" width="1" height="1" fill="#7BC96F"/></svg>',
+    trail: '<svg width="18" height="18" viewBox="0 0 6 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="3" width="2" height="3" fill="currentColor"/><rect x="3" y="0" width="2" height="3" fill="currentColor"/></svg>',
+    mark: '<svg width="15" height="18" viewBox="0 0 4 5" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="4" height="4" fill="currentColor"/><rect x="0" y="4" width="1" height="1" fill="currentColor"/><rect x="3" y="4" width="1" height="1" fill="currentColor"/></svg>',
+    satchel: '<svg width="18" height="18" viewBox="0 0 6 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="2" y="0" width="2" height="1" fill="currentColor"/><rect x="1" y="1" width="4" height="1" fill="currentColor"/><rect x="0" y="2" width="6" height="4" fill="currentColor"/><rect x="2" y="3" width="2" height="1" fill="#132B1F"/></svg>',
+    journal: '<svg width="18" height="18" viewBox="0 0 6 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="6" height="6" fill="currentColor"/><rect x="3" y="0" width="1" height="6" fill="#132B1F"/><rect x="1" y="2" width="1" height="1" fill="#132B1F"/><rect x="4" y="2" width="1" height="1" fill="#132B1F"/></svg>',
+    soundOn: '<svg width="21" height="18" viewBox="0 0 7 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="2" width="1" height="2" fill="#F2EBD3"/><rect x="1" y="1" width="1" height="4" fill="#F2EBD3"/><rect x="2" y="0" width="1" height="6" fill="#F2EBD3"/><rect x="4" y="2" width="1" height="2" fill="#7BC96F"/><rect x="5" y="1" width="1" height="1" fill="#7BC96F"/><rect x="5" y="4" width="1" height="1" fill="#7BC96F"/><rect x="6" y="2" width="1" height="2" fill="#7BC96F"/></svg>',
+    soundOff: '<svg width="21" height="18" viewBox="0 0 7 6" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="2" width="1" height="2" fill="#A9C2A6"/><rect x="1" y="1" width="1" height="4" fill="#A9C2A6"/><rect x="2" y="0" width="1" height="6" fill="#A9C2A6"/><rect x="4" y="1" width="1" height="1" fill="#C8643B"/><rect x="5" y="2" width="1" height="2" fill="#C8643B"/><rect x="6" y="1" width="1" height="1" fill="#C8643B"/><rect x="4" y="4" width="1" height="1" fill="#C8643B"/><rect x="6" y="4" width="1" height="1" fill="#C8643B"/></svg>',
+    flame: '<svg width="18" height="21" viewBox="0 0 6 7" shape-rendering="crispEdges" aria-hidden="true"><rect x="2" y="0" width="1" height="1" fill="#F2C14E"/><rect x="2" y="1" width="2" height="1" fill="#F2C14E"/><rect x="1" y="2" width="3" height="1" fill="#F28C28"/><rect x="1" y="3" width="4" height="1" fill="#F28C28"/><rect x="0" y="4" width="6" height="2" fill="#D9412B"/><rect x="2" y="4" width="2" height="2" fill="#F2C14E"/><rect x="1" y="6" width="4" height="1" fill="#8A3A12"/></svg>'
   };
   function bookmark(fill) {
     return '<svg width="16" height="20" viewBox="0 0 4 5" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="4" height="4" fill="' + fill + '"/><rect x="0" y="4" width="1" height="1" fill="' + fill + '"/><rect x="3" y="4" width="1" height="1" fill="' + fill + '"/></svg>';
   }
-  function quest(color) {
-    return '<svg width="14" height="16" viewBox="0 0 7 8" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="7" height="8" fill="' + color + '"/><rect x="1" y="1" width="5" height="6" fill="#12112A"/><rect x="2" y="2" width="3" height="1" fill="' + color + '"/><rect x="2" y="4" width="3" height="1" fill="' + color + '"/></svg>';
+  function soundButton() {
+    var on = Sfx.isOn();
+    return '<button class="icon-btn" aria-label="' + (on ? 'Sound is on. Mute' : 'Sound is off. Turn sound on') + '" aria-pressed="' + on + '" data-act="' + act(function () { Sfx.setOn(!Sfx.isOn()); Sfx.play('rustle'); render(); }) + '">' + (on ? ICON.soundOn : ICON.soundOff) + '</button>';
+  }
+  function canopy() {
+    var leaves = '';
+    for (var i = 0; i < 13; i++) leaves += sp('leaf', 3, i % 2 === 1);
+    return '<div class="canopy" aria-hidden="true">' + leaves + '</div>';
   }
 
   // ---------------- screens ----------------
   function nav(active) {
     var s = game.state || {};
-    var savedOn = active === 'game' && s.filter === 'saved';
-    var feedOn = active === 'game' && !savedOn;
+    var markedOn = active === 'game' && s.filter === 'saved';
+    var trailOn = active === 'game' && !markedOn;
     return '<nav class="nav" aria-label="Main">' +
-      '<button class="' + (feedOn ? 'on' : '') + '" data-act="' + act(function () { ui.view = 'game'; if (game.state.filter === 'saved') game.setState({ filter: 'all' }); else render(); }) + '">' + ICON.feed + 'FEED</button>' +
-      '<button class="' + (savedOn ? 'on' : '') + '" data-act="' + act(function () { ui.view = 'game'; game.setState({ filter: 'saved' }); }) + '">' + bookmark('currentColor') + 'SAVED</button>' +
-      '<button class="' + (active === 'codex' ? 'on' : '') + '" data-act="' + act(openCodex) + '">' + ICON.gems + 'GEMS</button>' +
-      '<button class="' + (active === 'log' ? 'on' : '') + '" data-act="' + act(openLog) + '">' + ICON.log + 'LOG</button>' +
+      '<button class="' + (trailOn ? 'on' : '') + '" data-act="' + act(function () { Sfx.play('rustle'); ui.view = 'game'; if (game.state.filter === 'saved') game.setState({ filter: 'all' }); else render(); }) + '">' + ICON.trail + 'TRAIL</button>' +
+      '<button class="' + (markedOn ? 'on' : '') + '" data-act="' + act(function () { Sfx.play('rustle'); ui.view = 'game'; game.setState({ filter: 'saved' }); }) + '">' + ICON.mark + 'MARKED</button>' +
+      '<button class="' + (active === 'satchel' ? 'on' : '') + '" data-act="' + act(openSatchel) + '">' + ICON.satchel + 'SATCHEL</button>' +
+      '<button class="' + (active === 'journal' ? 'on' : '') + '" data-act="' + act(openJournal) + '">' + ICON.journal + 'JOURNAL</button>' +
       '</nav>';
   }
 
   function bootScreen() {
-    return '<div class="screen center"><span class="brand">STEPWISE</span><span class="tag blink">LOADING…</span>' +
-      '<span class="tag" style="text-align:center;padding:0 24px">The server naps when idle — the first load can take up to a minute.</span></div>';
+    return '<div class="screen center">' + sp('toucan', 5) +
+      '<span class="brand">STEPWISE</span><span class="runes-title">ᛋᛏᛖᛈᚹᛁᛋᛖ</span><span class="tag blink">LOADING…</span>' +
+      '<span class="tag" style="text-align:center;padding:0 24px">The jungle naps when idle — the first load can take up to a minute.</span></div>';
   }
 
   function authScreen() {
     var a = ui.auth, signup = a.mode === 'signup';
-    return '<div class="screen"><main class="scroll"><div class="auth">' +
-      '<span class="brand">STEPWISE</span><span class="tag">Think first. Code second.</span>' +
+    return '<div class="screen"><main class="scroll"><div class="auth">' + canopy() +
+      '<div class="auth-brand">' + sp('toucan', 4) + '<div><span class="brand">STEPWISE</span><br><span class="runes-title">ᛋᛏᛖᛈᚹᛁᛋᛖ</span></div></div>' +
+      '<span class="tag">Think first. Code second. A jungle of 78 temples awaits.</span>' +
       '<div class="tabs" role="tablist">' +
         '<button role="tab" aria-selected="' + !signup + '" class="chip' + (!signup ? ' on' : '') + '" data-act="' + act(function () { a.mode = 'login'; a.error = ''; render(); }) + '">SIGN IN</button>' +
-        '<button role="tab" aria-selected="' + signup + '" class="chip' + (signup ? ' on' : '') + '" data-act="' + act(function () { a.mode = 'signup'; a.error = ''; render(); }) + '">NEW ACCOUNT</button>' +
+        '<button role="tab" aria-selected="' + signup + '" class="chip' + (signup ? ' on' : '') + '" data-act="' + act(function () { a.mode = 'signup'; a.error = ''; render(); }) + '">NEW EXPLORER</button>' +
       '</div>' +
       '<form class="auth-form" id="auth-form" novalidate>' +
         '<div class="field"><label for="username">USERNAME</label><input id="username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>' +
         '<div class="field"><label for="password">PASSWORD</label><input id="password" name="password" type="password" autocomplete="' + (signup ? 'new-password' : 'current-password') + '" required minlength="8"></div>' +
         (signup && a.inviteRequired ? '<div class="field"><label for="invite">INVITE CODE</label><input id="invite" name="invite" autocomplete="off" spellcheck="false"></div>' : '') +
-        (signup && !a.inviteRequired ? '<p class="tag">You’re the first player — this account becomes the owner.</p>' : '') +
+        (signup && !a.inviteRequired ? '<p class="tag">You’re the first explorer — this account becomes the owner.</p>' : '') +
         (a.error ? '<p class="error" role="alert">' + esc(a.error) + '</p>' : '') +
-        '<button class="btn big" type="submit"' + (a.busy ? ' disabled' : '') + '>' + (a.busy ? '…' : signup ? 'CREATE ACCOUNT ▶' : 'SIGN IN ▶') + '</button>' +
+        '<button class="btn big" type="submit"' + (a.busy ? ' disabled' : '') + '>' + (a.busy ? '…' : signup ? 'BEGIN THE EXPEDITION ▶' : 'ENTER THE JUNGLE ▶') + '</button>' +
       '</form>' +
-      '<p class="tag">Your gems, cleared quests, answers and code are saved to your account, so they follow you between devices.</p>' +
+      '<p class="tag">Your gems, runes, answers and code are saved to your account, so they follow you between devices.</p>' +
     '</div></main></div>';
   }
 
   function feed(v) {
-    var vault = v.vault.map(function (g) {
-      return '<div class="vault-item' + (g.gem.rare ? ' rare' : '') + '" role="img" aria-label="' + esc(g.label) + '" style="opacity:' + g.dim + '">' +
-        '<div class="vault-gem">' + gem(g.gem) + '</div>' +
-        '<span class="vault-count" style="color:' + g.color + '">' + g.count + '</span>' +
-        '<span class="vault-name">' + esc(g.name) + '</span>' +
-        '<span class="vault-shard" style="color:' + g.color + '">' + esc(g.shardLabel) + '</span></div>';
+    var satchel = v.vault.filter(function (g, i) { return i < 6; }).map(function (g) {
+      return '<span class="satchel-item" style="opacity:' + g.dim + '">' + px(g.gem) + '<span class="satchel-count" style="color:' + g.color + '">' + g.count + '</span></span>';
     }).join('');
     var chips = v.chips.map(function (c) {
       return '<button class="chip' + (c.on ? ' on' : '') + '" aria-pressed="' + c.on + '" data-act="' + act(c.pick) + '">' + esc(c.label) + '</button>';
     }).join('');
     var posts = v.posts.map(card).join('');
-    var empty = v.posts.length ? '' : '<p class="end">Nothing here yet. Tap the bookmark on a quest to save it for later.</p>';
+    var marked = (game.state || {}).filter === 'saved';
+    var empty = v.posts.length ? '' : '<p class="end">' + (marked ? 'No marked trails yet. Tap the marker on a trail to keep it here.' : 'Nothing on this trail yet.') + '</p>';
+    var surprises = (v.weather ? weatherBanner(v.weather) : '') + runeCard(v.dailyRune) +
+      (v.ruinResult ? ruinResultCard(v.ruinResult) : '') + v.ruins.map(ruinCard).join('');
     return '<div class="screen">' +
-      '<header class="feed-head">' +
-        '<div class="brand-row"><div style="display:flex;flex-direction:column;gap:6px"><span class="brand">STEPWISE</span><span class="tag">Think first. Code second.</span></div>' +
-        '<button class="codex-link" data-act="' + act(openCodex) + '">TOTAL ' + v.totalGems + ' · CODEX ▶</button></div>' +
-        '<button class="vault" aria-label="Gem vault — open the gem codex" data-act="' + act(openCodex) + '">' + vault + '</button>' +
+      '<header class="feed-head jungle-head">' + canopy() +
+        deco('vine', 3, false, 'top:20px;left:6px') + deco('vine', 2, false, 'top:18px;right:72px') + deco('firefly', 2, false, 'top:70px;right:130px', '') +
+        '<div class="brand-row"><div class="brand-col"><span class="brand">STEPWISE</span><span class="runes-title" aria-label="Stepwise, in runes">ᛋᛏᛖᛈᚹᛁᛋᛖ</span></div>' + soundButton() + '</div>' +
+        '<div class="day-line">' + sp('torch', 2) + '<span class="px gold" style="font-size:9px">' + (ui.streak > 0 ? 'DAY ' + ui.streak + ' ON THE TRAIL' : 'A NEW TRAIL BEGINS') + '</span>' +
+          '<span class="tag">· ' + v.totalGems + ' gems</span></div>' +
+        '<button class="satchel-strip" aria-label="Satchel: ' + v.totalGems + ' gems. Open the satchel" data-act="' + act(openSatchel) + '"><span class="px muted" style="font-size:8px">SATCHEL</span>' + satchel + '<span class="tag" style="margin-left:auto">+8 more ▶</span></button>' +
         '<div class="chips" aria-label="Filter by gem family">' + chips + '</div>' +
         '<span class="tag">' + esc(v.feedCount) + '</span>' +
       '</header>' +
-      '<main class="scroll" data-scroll="feed"><div class="feed">' + posts + empty +
-        (v.posts.length ? '<p class="end">— END OF FEED —</p>' : '') + '</div></main>' +
+      '<main class="scroll" data-scroll="feed"><div class="feed">' + (marked ? '' : surprises) + posts + empty +
+        (v.posts.length ? '<p class="end">— the trail continues tomorrow —</p>' : '') + '</div></main>' +
       nav('game') +
     '</div>';
   }
 
+  function weatherBanner(w) {
+    return '<section class="weather" style="background:' + w.bg + ';border-color:' + w.color + '">' + sp(w.sprite, 3) +
+      '<div><span class="px" style="font-size:10px;color:' + w.color + '">' + esc(w.title) + '</span><p>' + esc(w.effect) + '</p></div></section>';
+  }
+
+  function runeCard(r) {
+    if (r.carved) {
+      return '<section class="rune-mini"><span class="rune-glyph small" aria-hidden="true">' + esc(r.glyph) + '</span>' +
+        '<div><span class="px cyan" style="font-size:9px">TODAY’S RUNE · ' + esc(r.name) + '</span><p>' + esc(r.blessing.replace('Blessing: ', '')) + ' · blessing active</p></div>' +
+        '<button class="mini-link" data-act="' + act(openSatchel) + '">' + r.carvedCount + '/24 ▶</button></section>';
+    }
+    return '<article class="rune-card">' + deco('leaf', 2, true, 'top:-14px;right:-10px') +
+      '<span class="px cyan" style="font-size:9px">TODAY’S RUNE</span>' +
+      '<div class="rune-head">' + sp('runestone', 5) + '<span class="rune-glyph" aria-hidden="true">' + esc(r.glyph) + '</span>' +
+        '<div class="rune-name"><span class="px" style="font-size:12px">' + esc(r.name) + '</span><span class="tag">' + esc(r.meaning) + '</span></div></div>' +
+      '<p class="saying">' + esc(r.saying) + '</p>' +
+      '<div class="blessing">' + px(r.blessSprite) + '<span>' + esc(r.blessing) + '</span></div>' +
+      '<div class="row-between"><span class="tag">' + r.carvedCount + ' of 24 runes carved</span>' +
+        '<button class="btn cyan-btn" data-act="' + act(r.carve) + '">CARVE IT ▶</button></div>' +
+    '</article>';
+  }
+
+  function ruinCard(r) {
+    var body;
+    if (r.open) {
+      body = '<div class="tablet small">' + esc(r.question) + '</div>' +
+        '<div class="field"><label for="ruin">FROM MEMORY</label><textarea id="ruin" class="answer short" data-field="ruinDraft" placeholder="What do you remember?">' + esc(r.draft) + '</textarea></div>' +
+        '<div class="row-between"><span class="reward" style="color:' + r.gemColor + '">' + px(r.gem) + esc(r.reward) + '</span>' +
+          '<button class="btn moss-btn" id="ruin-carve" data-act="' + act(r.carve) + '"' + (r.draft && r.draft.trim() ? '' : ' disabled') + '>CARVE ▶</button></div>';
+    } else {
+      body = '<p class="prompt">Vines are creeping back over this temple. Answer one marker from memory to clear them.</p>' +
+        '<div class="row-between"><span class="reward" style="color:' + r.gemColor + '">' + px(r.gem) + esc(r.reward) + '</span>' +
+          '<button class="btn moss-btn" data-act="' + act(r.openIt) + '">CLEAR VINES ▶</button></div>';
+    }
+    return '<article class="ruin-card">' + deco('vine', 3, false, 'top:-8px;left:22px') + deco('vine', 2, false, 'top:-8px;left:58px') +
+      deco('vine', 3, false, 'top:-8px;right:30px') + deco('leaf', 3, true, 'bottom:-14px;right:-12px') +
+      '<div class="row-between" style="padding-top:26px"><span class="px moss" style="font-size:9px">OVERGROWN RUINS</span><span class="tag">' + esc(r.ago) + '</span></div>' +
+      '<h2>' + esc(r.title) + '</h2>' + body + '</article>';
+  }
+
+  function ruinResultCard(r) {
+    return '<article class="ruin-card done">' +
+      '<div class="row-between"><span class="px moss" style="font-size:9px">VINES CLEARED</span><button class="mini-link" data-act="' + act(r.dismiss) + '">OK ✓</button></div>' +
+      '<h2>' + esc(r.title) + '</h2>' +
+      '<div class="tablet small">' + esc(r.question) + '</div>' +
+      '<div class="mine">' + esc(r.answer) + '</div>' +
+      '<div class="angle"><span class="px cyan" style="font-size:9px">ANOTHER ANGLE</span><p>' + esc(r.insight) + '</p></div>' +
+      '<span class="tag gold">' + esc(r.line) + '</span></article>';
+  }
+
   function card(p) {
-    var cls = 'card' + (p.solved ? ' solved' : (p.fresh ? ' fresh' : '')) + (p.locked ? ' locked' : '');
+    var cls = 'card' + (p.solved ? ' solved' : (p.fresh ? ' fresh' : '')) + (p.locked ? ' locked' : '') + (p.isDare ? ' dare' : '');
     var top = '<div class="card-top">' +
-      '<div class="avatar" aria-hidden="true" style="border-color:' + p.gemColor + ';color:' + p.gemColor + '">' + esc(p.mono) + '</div>' +
+      '<div class="avatar" aria-hidden="true" style="border-color:' + (p.locked ? '#4E4C42' : p.gemColor) + ';color:' + (p.locked ? '#A9C2A6' : p.gemColor) + '">' + esc(p.mono) + '</div>' +
       '<div class="card-meta"><span class="t">' + esc(p.topic) + '</span><span class="m">' + esc(p.meta) + '</span></div>' +
       (p.fresh ? '<span class="badge new blink">NEW</span>' : '') +
-      '<span class="badge" style="background:' + p.badgeBg + ';color:' + p.badgeFg + '">' + esc(p.diff) + '</span></div>';
+      '<span class="badge ' + BADGE_CLASS[p.diff] + '">' + esc(p.diff.toUpperCase()) + '</span></div>';
     var body;
     if (p.locked) {
       var reqs = p.reqs.map(function (r) {
-        return '<div class="req"><div class="req-icon">' + (r.isGem ? gem(r.gem) : quest(r.color)) + '</div>' +
-          '<div class="req-body"><span class="req-label" style="color:' + r.textColor + '">' + esc(r.label) + '</span>' +
-          '<div class="bar"><div style="width:' + r.pct + ';background:' + r.color + '"></div></div></div></div>';
+        return '<div class="req"><div class="req-icon">' + (r.isGem ? px(r.gem) : sp('torch', 2)) + '</div>' +
+          '<div class="req-body"><span class="req-label" style="color:' + (r.met ? '#7BC96F' : '#F2EBD3') + '">' + esc(r.label) + '</span>' +
+          '<div class="bar"><div style="width:' + r.pct + ';background:' + (r.met ? '#7BC96F' : '#F2C14E') + '"></div></div></div></div>';
       }).join('');
-      body = '<div class="lock"><div class="lock-title">' + ICON.lock + 'LOCKED QUEST</div><p>' + esc(p.lockWhy) + ' To unlock:</p>' + reqs + '</div>';
+      body = '<div class="lock"><div class="lock-title">' + sp('runestone', 2) + 'SEALED TEMPLE</div><p>' + esc(p.lockWhy) + ' To break the seal:</p>' + reqs +
+        (p.canPeek ? '<div class="row-between peek">' + sp('monkey', 2) + '<span class="tag">The monkey’s shortcut is open today.</span><button class="btn monkey-btn" data-act="' + act(p.peek) + '">PEEK ▶</button></div>' : '') +
+        '</div>';
     } else {
       body = '<p class="prompt">' + esc(p.prompt) + '</p>' +
         (p.hasBuilds ? '<span class="builds">✓ Builds on ' + esc(p.buildsOn) + '</span>' : '') +
+        (p.isDare ? '<div class="dare-tag">' + sp('jaguar', 2) + '<span>JAGUAR DARE · no toucan, double gems</span></div>' : '') +
         '<pre class="example">' + esc(p.example) + '</pre>' +
-        (p.solved ? '<div class="cleared">' + ICON.check + 'CLEARED · GEMS COLLECTED</div>' : '') +
+        (p.solved ? '<div class="cleared">' + ICON.check + 'TEMPLE CLEARED · GEMS COLLECTED</div>' : '') +
         '<div class="actions">' +
-          '<button class="icon-btn" aria-label="' + esc(p.saveLabel) + '" data-act="' + act(p.toggleSave) + '">' + bookmark(p.saveFill) + '</button>' +
-          '<div class="reward" style="color:' + p.gemColor + '">' + gem(p.gem) + esc(p.rewardLabel) + '</div>' +
+          '<button class="icon-btn" aria-label="' + esc(p.saveLabel) + '" aria-pressed="' + p.isSaved + '" data-act="' + act(p.toggleSave) + '">' + bookmark(p.isSaved ? '#F2C14E' : '#2F6146') + '</button>' +
+          '<div class="reward" style="color:' + p.gemColor + '">' + px(p.gem) + esc(p.rewardLabel) + '</div>' +
           '<button class="btn" data-act="' + act(p.open) + '">' + esc(p.cta) + '</button>' +
         '</div>' +
         (p.hasShards ? '<span class="drops">◆ Also drops shards: ' + esc(p.shardNames) + '</span>' : '');
     }
-    return '<article class="' + cls + '">' + top + '<h2>' + esc(p.title) + '</h2>' + body + '</article>';
+    var decor = p.locked ? deco('vine', 2, false, 'top:-10px;left:-8px') : deco('leaf', 2, (p.pid % 2) === 1, 'top:-16px;' + ((p.pid % 2) ? 'right:-14px' : 'left:-14px'));
+    return '<article class="' + cls + '">' + decor + (p.locked ? '' : runeStrip(RUNE_ROW)) + top + '<h2>' + esc(p.title) + '</h2>' + body + '</article>';
   }
 
   function walk(v) {
+    var stones = v.stones.map(function (s, i) {
+      var isLast = i === v.stones.length - 1;
+      var stone = isLast ? '<div class="stone-idol">' + sp('idol', 2) + '</div>' : '<div class="stone ' + s.state + '"></div>';
+      return stone + (isLast ? '' : '<div class="stone-path ' + (s.state === 'done' ? 'done' : '') + '"></div>');
+    }).join('');
     var head = '<header class="walk-head"><div class="walk-row">' +
-      '<button class="icon-btn" aria-label="Back to feed" data-act="' + act(v.backToFeed) + '">' + ICON.back + '</button>' +
+      '<button class="icon-btn" aria-label="Back to the trail" data-act="' + act(v.backToFeed) + '">' + ICON.back + '</button>' +
       '<div class="walk-title"><span class="px">' + esc(v.cur.title) + '</span><span class="muted">' + esc(v.phaseLabel) + '</span></div>' +
-      '<div class="gem-chip" role="img" aria-label="' + esc(v.cur.gemLabel) + '" style="border-color:' + v.cur.gemColor + '">' + gem(v.cur.gem) + v.cur.gemCount + '</div>' +
-      '</div><div class="segs" aria-hidden="true">' + v.segs.map(function (s) { return '<div style="background:' + s.bg + '"></div>'; }).join('') + '</div></header>';
+      '<div class="gem-chip" role="img" aria-label="' + esc(v.cur.gemLabel) + '" style="border-color:' + v.cur.gemColor + '">' + px(v.cur.gem) + v.cur.gemCount + '</div>' +
+      '</div><div class="stones" aria-hidden="true">' + stones + '</div></header>';
     var main, foot;
     if (v.isStep) {
-      main = '<span class="kicker">QUEST ' + v.stepNum + '/' + v.stepTotal + '</span>' +
-        '<div class="question"><h1>' + esc(v.question) + '</h1></div>';
+      main = '<span class="kicker">TRAIL MARKER ' + v.stepNum + ' / ' + v.stepTotal + '</span>' +
+        '<div class="tablet">' + runeStrip('ᛏᚱᚨᛁᛚᛗᚨᚱᚲᛖᚱᛏᚱᚨᛁᛚᛗᚨᚱᚲᛖᚱ') + '<h1>' + esc(v.question) + '</h1></div>';
       if (v.notRevealed) {
-        main += '<button class="hint-btn" aria-expanded="' + v.tipOpen + '" data-act="' + act(v.toggleTip) + '">' + ICON.bulb + esc(v.tipLabel) + '</button>' +
-          (v.tipOpen ? '<p class="hint">' + esc(v.tip) + '</p>' : '') +
-          '<div class="field"><label for="answer">YOUR ANSWER</label>' +
-          '<textarea id="answer" class="answer" data-field="draft" placeholder="Type your reasoning...">' + esc(v.draft) + '</textarea>' +
-          '<span class="muted" style="font-size:18px">No wrong answers. Commit to unlock another angle.</span></div>';
-        foot = '<button class="btn big" id="commit" data-act="' + act(v.submitAnswer) + '"' + (v.noDraft ? ' disabled' : '') + '>COMMIT ▶</button>';
+        main += (v.tipOpen ? '<div class="toucan-row">' + sp('toucan', 4) + '<div class="bubble"><span class="px">TOUCAN SAYS</span><p>' + esc(v.tip) + '</p></div></div>' : '') +
+          (v.dareHere && !v.tipOpen ? '<div class="dare-tag">' + sp('jaguar', 2) + '<span>The jaguar is watching: asking the toucan ends the dare.</span></div>' : '') +
+          '<button class="hint-btn" aria-expanded="' + v.tipOpen + '" data-act="' + act(v.toggleTip) + '">' + (v.tipOpen ? '' : sp('toucan', 1)) + esc(v.tipLabel) + '</button>' +
+          '<div class="field"><label for="answer">YOUR CARVING</label>' +
+          '<textarea id="answer" class="answer" data-field="draft" placeholder="Carve your reasoning…">' + esc(v.draft) + '</textarea>' +
+          '<span class="muted" style="font-size:18px">No wrong answers. Carve it to see another angle.</span></div>';
+        foot = '<button class="btn big" id="commit" data-act="' + act(v.submitAnswer) + '"' + (v.noDraft ? ' disabled' : '') + '>CARVE IT ▶</button>';
       } else {
         main += '<div class="mine">' + esc(v.myAnswer) + '</div>' +
-          '<div class="angle"><span class="px" style="font-size:9px;color:#4FD6FF">ANOTHER ANGLE</span><p>' + esc(v.insight) + '</p></div>' +
+          '<div class="angle"><span class="px cyan" style="font-size:9px">ANOTHER ANGLE</span><p>' + esc(v.insight) + '</p></div>' +
           '<p class="muted" style="margin:0;font-size:19px">Match your thinking? If not, sit with the difference before moving on.</p>';
         foot = '<button class="btn big go" data-act="' + act(v.nextStep) + '">' + esc(v.continueLabel) + '</button>';
       }
+      main = deco('leaf', 4, false, 'bottom:8px;left:-10px') + deco('leaf', 3, true, 'bottom:40px;right:-12px') + main;
     } else if (v.isCode) {
-      main = '<h1 class="boss">BOSS STAGE: CODE IT</h1>' +
-        (v.hasQuestGain ? '<section class="quest-gain"><div class="burst small" aria-hidden="true">' + gem(v.cur.gem) + '</div>' +
-          '<span class="px" style="font-size:9px;line-height:1.6;color:' + v.cur.gemColor + '">' + esc(v.questLine) + '</span>' +
-          (v.hasQuestUnlocks ? '<span class="tag">Unlocked: ' + esc(v.questUnlocks.map(function (u) { return u.title; }).join(', ')) + '</span>' : '') +
-          '</section>' : '') +
-        '<p class="tag" style="margin:0">' + esc(v.bossPrize) + '</p>' +
-        '<details><summary>YOUR REASONING SO FAR</summary><ol>' +
-        v.plan.map(function (it) { return '<li><span class="muted">' + esc(it.q) + '</span><br><span style="color:#FFD23F">' + esc(it.a) + '</span></li>'; }).join('') +
+      main = '<section class="guardian">' + deco('vine', 2, false, 'top:-6px;right:10px') + deco('torch', 2, false, 'top:8px;left:8px') +
+          '<div class="guardian-art">' + sp('idol', 5) + '</div>' +
+          '<div class="guardian-text"><span class="px cyan" style="font-size:10px;line-height:1.5">GUARDIAN OF ' + esc(SHORT[v.cur.family] ? SHORT[v.cur.family].replace(' ★', '') : '') + '</span>' +
+            '<span>' + esc(v.bossPrize) + '</span>' +
+            (v.hasQuestGain ? '<span class="moss">' + esc(v.questLine) + ' ✓</span>' : '') +
+            (v.hasQuestUnlocks ? '<span class="tag">Opened: ' + esc(v.questUnlocks.map(function (u) { return u.title; }).join(', ')) + '</span>' : '') +
+          '</div></section>' +
+        (v.dareHere ? '<div class="dare-tag">' + sp('jaguar', 2) + '<span>Jaguar dare active: no toucan used, so the guardian pays extra.</span></div>' : '') +
+        '<details><summary>YOUR CARVINGS SO FAR</summary><ol>' +
+        v.plan.map(function (it) { return '<li><span class="muted">' + esc(it.q) + '</span><br><span class="gold">' + esc(it.a) + '</span></li>'; }).join('') +
         '</ol></details>' +
-        '<div class="field"><div style="display:flex;justify-content:space-between;align-items:center"><label for="code">SOLUTION.TS</label><span class="muted" style="font-size:18px">TypeScript</span></div>' +
+        '<div class="field"><div class="row-between"><label for="code">SOLUTION.TS</label><span class="muted" style="font-size:18px">TypeScript</span></div>' +
         '<textarea id="code" class="code" data-field="code" spellcheck="false"' + (v.judging ? ' readonly' : '') + '>' + esc(v.code) + '</textarea></div>' +
         (v.hasReport ? reportPanel(v.report, v.bossTries) : '');
       foot = '<button class="btn big" data-act="' + act(v.submitCode) + '"' + (v.judging ? ' disabled' : '') + '>' + esc(v.bossLabel) + '</button>';
     } else {
-      var burst = v.burst.map(function (g) { return '<div class="gem-pop">' + gem(g) + '</div>'; }).join('');
-      main = '<section class="clear" style="border-color:' + v.cur.gemColor + '">' +
-          '<span class="title">STAGE CLEAR!</span><span style="color:#3DDC84">' + esc(v.rv.tests) + '</span>' +
-          '<span class="tag">' + esc(v.bossTriesLine) + '</span>' +
-          (v.rareDrop ? '<span class="rare-drop blink">★ RARE DROP ★</span>' : '') +
-          '<div class="burst" aria-hidden="true">' + burst + '</div>' +
-          '<span class="px" style="font-size:11px;line-height:1.6;color:' + v.cur.gemColor + '">' + esc(v.gainLabel) + '</span>' +
-          (v.hasSplit ? '<span style="font-size:19px;color:#E2DEF5">' + esc(v.splitLine) + '</span>' : '') +
-          '<span class="muted" style="font-size:19px">' + esc(v.cur.gemSummary) + '</span>' +
-          (v.hasShardGain ? '<span style="font-size:19px;color:#E2DEF5">◆ +1 shard each: ' + esc(v.shardLine) + '</span>' : '') +
-          (v.hasFused ? '<span class="px blink" style="font-size:9px;line-height:1.6;color:#FFD23F">5 SHARDS FUSED → +1 ' + esc(v.fusedLine) + '</span>' : '') +
-          '<span class="tag">Saved to your log ✓</span>' +
-        '</section>' +
-        (v.hasUnlocks ? '<section class="unlocked"><div class="lock-title">' + ICON.open + 'NEW QUEST UNLOCKED</div>' +
-          v.unlocks.map(function (u) { return '<div class="row">' + gem(u.gem) + esc(u.title) + '</div>'; }).join('') + '</section>' : '') +
-        '<div class="stats"><div class="stat"><span class="px">TIME</span><span>' + esc(v.rv.time) + '</span></div>' +
-          '<div class="stat"><span class="px">SPACE</span><span>' + esc(v.rv.space) + '</span></div></div>' +
-        '<section class="notes"><h2>REVIEWER NOTES</h2>' +
-          v.rv.notes.map(function (n) { return '<div class="note"><span class="tagpill" style="background:' + n.tagBg + '">' + esc(n.tag) + '</span><p>' + esc(n.text) + '</p></div>'; }).join('') +
-        '</section>' +
-        '<section class="side"><span class="px muted" style="font-size:8px;line-height:1.6">SIDE QUEST</span><p>' + esc(v.rv.followup) + '</p></section>';
-      foot = '<button class="btn ghost big" style="flex:1" data-act="' + act(v.backToFeed) + '">FEED</button>' +
-        '<button class="btn big" style="flex:1.6" data-act="' + act(v.goNext) + '">NEXT QUEST <span class="blink">▶</span></button>';
+      main = clearScreen(v);
+      foot = '<button class="btn ghost big" style="flex:1" data-act="' + act(v.backToFeed) + '">TRAIL</button>' +
+        '<button class="btn big" style="flex:1.6" data-act="' + act(v.goNext) + '">ONWARD <span class="blink">▶</span></button>';
     }
-    return '<div class="screen">' + head + '<main class="scroll" data-scroll="walk"><div class="body">' + main + '</div></main>' +
+    return '<div class="screen">' + head + '<main class="scroll" data-scroll="walk"><div class="body jungle-body">' + main + '</div></main>' +
       '<div class="foot">' + foot + '</div></div>';
+  }
+
+  function clearScreen(v) {
+    if (v.isPractice) {
+      return '<section class="clear" style="border-color:#C08A55">' + sp('monkey', 5) +
+        '<span class="title">PRACTICE RUN COMPLETE</span><span class="moss">' + esc(v.rv.tests) + '</span>' +
+        '<span class="tag">' + esc(v.gainLabel) + '. Break the seal on the trail to earn its gems.</span></section>' + notesBlock(v);
+    }
+    var burst = v.burst.map(function (g) { return '<div class="gem-pop">' + px(g) + '</div>'; }).join('');
+    return '<section class="clear" style="border-color:' + v.cur.gemColor + '">' + deco('leaf', 3, false, 'top:-14px;left:-12px') + deco('leaf', 3, true, 'top:-14px;right:-12px') +
+        '<span class="title">TEMPLE CLEARED!</span><span class="moss">' + esc(v.rv.tests) + '</span>' +
+        '<span class="tag">' + esc(v.bossTriesLine) + '</span>' +
+        (v.rareDrop ? '<span class="rare-drop blink">★ RARE DROP ★</span>' : '') +
+        '<div class="burst" aria-hidden="true">' + burst + '</div>' + sp('chestOpen', 5) +
+        '<span class="px" style="font-size:11px;line-height:1.6;color:' + v.cur.gemColor + '">' + esc(v.gainLabel) + '</span>' +
+        (v.hasSplit ? '<span class="soft">' + esc(v.splitLine) + '</span>' : '') +
+        (v.dareResult ? '<span class="gold">' + esc(v.dareResult) + '</span>' : '') +
+        (v.blessLine ? '<span class="cyan">' + esc(v.blessLine) + '</span>' : '') +
+        (v.hasShardGain ? '<span class="soft">◆ Shards: ' + esc(v.shardLine) + '</span>' : '') +
+        (v.hasFused ? '<span class="px blink gold" style="font-size:9px;line-height:1.6">5 SHARDS FUSED → +1 ' + esc(v.fusedLine) + '</span>' : '') +
+        '<span class="tag">' + esc(v.cur.gemSummary) + '</span>' +
+      '</section>' +
+      (v.encounter ? encounterCard(v.encounter) : '') +
+      (v.hasUnlocks ? '<section class="unlocked"><span class="px cyan" style="font-size:9px">' + (v.unlocks.length > 1 ? 'NEW TRAILS OPENED' : 'NEW TRAIL OPENED') + '</span>' +
+        v.unlocks.map(function (u) { return '<div class="row">' + px(u.gem) + esc(u.title) + '</div>'; }).join('') + '</section>' : '') +
+      notesBlock(v);
+  }
+
+  function notesBlock(v) {
+    return '<div class="stats"><div class="stat"><span class="px">TIME</span><span>' + esc(v.rv.time) + '</span></div>' +
+        '<div class="stat"><span class="px">SPACE</span><span>' + esc(v.rv.space) + '</span></div></div>' +
+      '<section class="notes"><h2>EXPLORER’S NOTES</h2>' +
+        v.rv.notes.map(function (n) { return '<div class="note"><span class="tagpill" style="background:' + n.tagBg + '">' + esc(n.tag) + '</span><p>' + esc(n.text) + '</p></div>'; }).join('') +
+      '</section>' +
+      '<section class="side"><span class="px muted" style="font-size:8px;line-height:1.6">SIDE PATH</span><p>' + esc(v.rv.followup) + '</p></section>';
+  }
+
+  function encounterCard(e) {
+    var body = '<div class="enc-box"><span>' + esc(e.detail) + '</span>' + (e.reward ? '<span class="gold">' + esc(e.reward) + '</span>' : '') + '</div>';
+    var buttons = '';
+    if (e.done) {
+      body += (e.answer ? '<div class="mine">' + esc(e.answer) + '</div>' : '') +
+        (e.insight && e.answer ? '<div class="angle"><span class="px cyan" style="font-size:9px">ANOTHER ANGLE</span><p>' + esc(e.insight) + '</p></div>' : '') +
+        '<p class="enc-msg">' + esc(e.msg) + '</p>';
+    } else {
+      if (e.needsAnswer) body += '<div class="field"><label for="frog">YOUR ANSWER</label><textarea id="frog" class="answer short" data-field="frogDraft" placeholder="Ribbit back…">' + esc(e.draft) + '</textarea></div>';
+      buttons = '<div class="enc-buttons">' +
+        (e.secondary ? '<button class="btn ghost" style="flex:1;border-color:' + e.color + ';color:' + e.color + '" data-act="' + act(e.secondary.act) + '">' + esc(e.secondary.label) + '</button>' : '') +
+        '<button class="btn" id="enc-primary" style="flex:1.4;background:' + e.color + '" data-act="' + act(e.primary.act) + '"' + (e.needsAnswer && !(e.draft && e.draft.trim()) ? ' disabled' : '') + '>' + esc(e.primary.label) + '</button></div>';
+    }
+    return '<section class="encounter" style="background:' + e.bg + ';border-color:' + e.color + '">' + deco('leaf', 3, true, 'bottom:-12px;right:-10px') +
+      '<span class="px" style="font-size:9px;color:' + e.color + '">WILD ENCOUNTER</span>' +
+      '<div class="enc-head"><div class="enc-art">' + sp(e.sprite, 5) + '</div><div class="enc-text"><span class="px" style="font-size:11px;line-height:1.5">' + esc(e.title) + '</span><span class="soft">' + esc(e.line) + '</span></div></div>' +
+      body + buttons + '</section>';
   }
 
   function reportPanel(rep, tries) {
     if (rep.fatal) {
-      return '<section class="fail" role="alert"><span class="px fail-title">✗ YOUR CODE DIDN’T RUN</span><p>' + esc(rep.fatal) + '</p>' + logsBlock(rep.logs) + '</section>';
+      return '<section class="fail" role="alert"><span class="px fail-title">✗ THE GUARDIAN CAN’T READ YOUR CARVING</span><p>' + esc(rep.fatal) + '</p>' + logsBlock(rep.logs) + '</section>';
     }
     var f = rep.fail || {};
     return '<section class="fail" role="alert">' +
-      '<span class="px fail-title">✗ ' + rep.passed + ' OF ' + rep.total + ' TESTS PASSED</span>' +
-      '<span class="tag">Failed test ' + ((f.index || 0) + 1) + (tries > 1 ? ' · try ' + tries : '') + '</span>' +
+      '<span class="px fail-title">✗ THE GUARDIAN BLOCKS YOU · ' + rep.passed + ' OF ' + rep.total + ' TRIALS</span>' +
+      '<span class="tag">Failed trial ' + ((f.index || 0) + 1) + (tries > 1 ? ' · try ' + tries : '') + '</span>' +
       (f.error ? '<p>' + esc(f.error) + '</p>' : '') +
       (f.input ? '<div class="io"><span class="px">INPUT</span><pre>' + esc(f.input) + '</pre></div>' : '') +
       (f.expected ? '<div class="io"><span class="px">EXPECTED</span><pre>' + esc(f.expected) + '</pre></div>' : '') +
       '<div class="io"><span class="px">GOT</span><pre>' + esc(f.got) + '</pre></div>' +
       logsBlock(rep.logs) +
-      '<span class="tag">Fix it and run again — your quest gems are safe, the boss gems wait for a full clear.</span>' +
+      '<span class="tag">Your trail gems are safe. The guardian waits.</span>' +
     '</section>';
   }
   function logsBlock(logs) {
@@ -440,60 +563,66 @@
     return '<div class="io"><span class="px">CONSOLE</span><pre>' + esc(logs.join('\n')) + '</pre></div>';
   }
 
-  // ---------------- gem codex ----------------
+  // ---------------- satchel: runestone + gems ----------------
   var RARE_LORE = {
     'Trie': 'Branches like a trie. Shifts teal → violet.',
     'Segment tree': 'A tiny segment tree; light sweeps its levels.'
   };
-  function openCodex() { ui.view = 'codex'; render(); }
-  function showFamily(fam) { ui.view = 'game'; game.setState({ screen: 'feed', filter: fam }); }
-  function codexScreen() {
+  function satchelScreen() {
+    var v = game.renderVals();
     var s = game.state || {};
     var gems = s.gems || {}, shards = s.shards || {};
     var quests = function (fam) { return PROBLEMS.filter(function (p) { return p.family === fam; }); };
     var cleared = function (fam) { return PROBLEMS.filter(function (p, i) { return p.family === fam && s.solved && s.solved[i]; }).length; };
-    var total = GEM_ORDER.reduce(function (n, f) { return n + (gems[f] || 0); }, 0);
-    var found = GEM_ORDER.filter(function (f) { return (gems[f] || 0) > 0; }).length;
 
-    var rare = GEM_ORDER.filter(function (f) { return GEMS[f].rare; }).map(function (f) {
-      var g = GEMS[f], have = gems[f] || 0, big = gemPixels(f, g.shape[0].length > 8 ? 8 : 9);
-      var q = quests(f)[0];
-      return '<button class="rare-card' + (have ? '' : ' unfound') + '" data-act="' + act(function () { showFamily(f); }) + '" aria-label="' + esc(g.name + ', ' + f + ': ' + have + ' found. Show the quest.') + '">' +
-        '<div class="rare-art"><div class="bob">' + gem(big) + '<span class="twinkle tw2"></span></div></div>' +
-        '<div class="rare-text"><span class="px" style="font-size:11px;color:' + g.color + '">' + esc(g.name.toUpperCase()) + '</span>' +
-          '<span class="t">' + esc(f) + ' · ' + (have ? have + ' found' : 'not found') + '</span>' +
-          '<span class="tag">' + esc(RARE_LORE[f] || '') + '</span>' +
-          (q ? '<span class="tag" style="color:#FFD23F">From: ' + esc(q.title.replace(/ \(.*\)$/, '')) + '</span>' : '') +
-        '</div></button>';
+    var runestone = v.runestone.map(function (a) {
+      return '<section class="aett"><div class="row-between"><span class="px muted" style="font-size:8px">' + esc(a.title) + '</span><span class="tag ' + (a.found ? 'cyan' : '') + '">' + a.found + '/8</span></div>' +
+        '<div class="rune-grid">' + a.runes.map(function (r) {
+          return '<div class="rune-cell' + (r.have ? ' have' : '') + (r.today ? ' today' : '') + '" role="img" aria-label="' + esc(r.label) + '" title="' + esc(r.n) + '">' + esc(r.g) + '</div>';
+        }).join('') + '</div>' + (a.found === 8 ? '<span class="tag gold">✓ Ætt complete — carved in full</span>' : '') + '</section>';
     }).join('');
+    var today = v.selectedRune
+      ? '<section class="rune-card compact"><div class="rune-head"><span class="rune-glyph" aria-hidden="true">' + esc(v.selectedRune.g) + '</span><div class="rune-name"><span class="px" style="font-size:11px">' + esc(v.selectedRune.n.toUpperCase()) + '</span><span class="tag">' + esc(v.selectedRune.m) + ' · carved today</span></div></div><p class="saying">' + esc(v.selectedRune.say) + '</p></section>'
+      : '<section class="rune-card compact"><p class="saying">Today’s rune waits on the trail. Carve it to add it to the stone.</p><button class="btn cyan-btn" data-act="' + act(function () { ui.view = 'game'; game.setState({ screen: 'feed', filter: 'all' }); }) + '">GO TO THE TRAIL ▶</button></section>';
 
     var common = GEM_ORDER.filter(function (f) { return !GEMS[f].rare; }).map(function (f) {
       var g = GEMS[f], have = gems[f] || 0, qs = quests(f);
-      return '<button class="codex-cell' + (have ? '' : ' unfound') + '" data-act="' + act(function () { showFamily(f); }) + '" aria-label="' + esc(g.name + ', ' + f + ': ' + have + ' gems, ' + cleared(f) + ' of ' + qs.length + ' quests cleared. Show these quests.') + '">' +
-        '<div class="codex-gem">' + gem(gemPixels(f, 4)) + '</div>' +
+      return '<button class="codex-cell' + (have ? '' : ' unfound') + '" data-act="' + act(function () { showFamily(f); }) + '" aria-label="' + esc(g.name + ', ' + f + ': ' + have + ' gems, ' + cleared(f) + ' of ' + qs.length + ' temples cleared. Show these trails.') + '">' +
+        '<div class="codex-gem">' + px(gemPixels(f, 4)) + '</div>' +
         '<span class="codex-name" style="color:' + g.color + '">' + esc(g.name) + '</span>' +
         '<span class="codex-fam">' + esc(SHORT[f].toLowerCase()) + '</span>' +
         '<span class="codex-count">' + have + (shards[f] ? ' <span style="color:' + g.color + '">◆' + shards[f] + '</span>' : '') + '</span>' +
         '<span class="codex-fam">' + cleared(f) + '/' + qs.length + ' cleared</span>' +
       '</button>';
     }).join('');
+    var rare = GEM_ORDER.filter(function (f) { return GEMS[f].rare; }).map(function (f) {
+      var g = GEMS[f], have = gems[f] || 0, big = gemPixels(f, g.shape[0].length > 8 ? 8 : 9);
+      var q = quests(f)[0];
+      return '<button class="rare-card' + (have ? '' : ' unfound') + '" data-act="' + act(function () { showFamily(f); }) + '" aria-label="' + esc(g.name + ', ' + f + ': ' + have + ' found. Show the trail.') + '">' +
+        '<div class="rare-art"><div class="bob">' + px(big) + '<span class="twinkle tw2"></span></div></div>' +
+        '<div class="rare-text"><span class="px" style="font-size:11px;color:' + g.color + '">' + esc(g.name.toUpperCase()) + '</span>' +
+          '<span class="t">' + esc(f) + ' · ' + (have ? have + ' found' : 'not found') + '</span>' +
+          '<span class="tag">' + esc(RARE_LORE[f] || '') + '</span>' +
+          (q ? '<span class="tag gold">From: ' + esc(q.title.replace(/ \(.*\)$/, '')) + '</span>' : '') +
+        '</div></button>';
+    }).join('');
 
     return '<div class="screen">' +
-      '<header class="feed-head"><div class="brand-row"><span class="brand">GEM CODEX</span><span class="tag">' + total + ' gems · ' + found + '/' + GEM_ORDER.length + ' kinds</span></div>' +
-        '<span class="tag">One gem per problem family. Tap a gem to see its quests.</span></header>' +
-      '<main class="scroll" data-scroll="codex"><div class="body">' +
-        '<section class="panel"><h2 class="px small">COMMON</h2><div class="codex-grid">' + common + '</div></section>' +
-        '<section class="panel"><h2 class="px small" style="color:#FFD23F">★ RARE</h2>' + rare + '</section>' +
-        '<section class="side"><span class="px muted" style="font-size:8px;line-height:1.6">HOW GEMS WORK</span>' +
-          '<p>Finish a problem’s quests for half its gems; beat the boss (all tests pass) for the rest. Easy 3, Medium 5, Hard 8. ' +
-          'Secondary topics drop shards ◆ — five fuse into a gem. Rare gems drop only from the boss.</p></section>' +
-      '</div></main>' + nav('codex') +
+      '<header class="feed-head jungle-head">' + canopy() + '<div class="brand-row"><div class="brand-col"><span class="brand">SATCHEL</span><span class="tag">' + v.totalGems + ' gems · ' + v.dailyRune.carvedCount + '/24 runes</span></div>' + soundButton() + '</div></header>' +
+      '<main class="scroll" data-scroll="satchel"><div class="body">' +
+        '<section class="panel"><div class="row-between"><h2 class="px small cyan">' + sp('runestone', 2) + ' RUNESTONE</h2><span class="tag">one rune a day</span></div>' + runestone + today + '</section>' +
+        '<section class="panel"><h2 class="px small">GEMS</h2><div class="codex-grid">' + common + '</div></section>' +
+        '<section class="panel"><h2 class="px small gold">★ RARE</h2>' + rare + '</section>' +
+        '<section class="side"><span class="px muted" style="font-size:8px;line-height:1.6">HOW THE JUNGLE PAYS</span>' +
+          '<p>Trail markers pay half a temple’s gems; the guardian pays the rest when every trial passes (Easy 3, Medium 5, Hard 8). ' +
+          'Secondary topics drop shards ◆ — five fuse into a gem. Rare gems drop only from guardians. Nothing in the jungle ever takes gems away.</p></section>' +
+      '</div></main>' + nav('satchel') +
     '</div>';
   }
 
-  function familyColor(fam) { return (GEMS[fam] && GEMS[fam].color) || '#B9B4D6'; }
-
-  function logScreen() {
+  // ---------------- journal ----------------
+  function familyColor(fam) { return (GEMS[fam] && GEMS[fam].color) || '#A9C2A6'; }
+  function journalScreen() {
     var L = ui.log, s = L.stats;
     var body;
     if (L.loading && !s) body = '<p class="tag blink">LOADING…</p>';
@@ -510,27 +639,31 @@
           '<span class="attempt-main"><span class="attempt-title">' + esc(a.title) + '</span>' +
           '<span class="tag">' + esc(when(a.createdAt)) + ' · ' + esc(a.difficulty) + '</span></span>' +
           '<span class="attempt-tag ' + (a.passed === false ? 'failed' : a.firstClear ? 'first' : '') + '">' +
-            (a.passed === false ? 'FAIL ' + (a.testsTotal ? a.testsPassed + '/' + a.testsTotal : '') : a.firstClear ? '+' + a.gemsEarned : 'REPLAY') + '</span>' +
+            (a.passed === false ? 'BLOCKED ' + (a.testsTotal ? a.testsPassed + '/' + a.testsTotal : '') : a.firstClear ? '+' + a.gemsEarned : 'RETURN') + '</span>' +
           '</button>';
-      }).join('') : '<p class="tag">No attempts yet. Clear a quest and it will show up here.</p>';
+      }).join('') : '<p class="tag">No entries yet. Face a guardian and it will show up here.</p>';
       body =
-        '<section class="streak">' + ICON.flame +
-          '<div><span class="px" style="font-size:16px;color:#FFD23F">' + s.streak + '</span> <span class="tag">day streak</span></div>' +
-          '<span class="tag">best ' + s.bestStreak + ' · ' + s.totals.clears + ' cleared · ' + s.totals.attempts + ' attempts</span>' +
+        '<section class="streak">' + sp('torch', 3) +
+          '<div><span class="px gold" style="font-size:16px">' + s.streak + '</span> <span class="tag">day' + (s.streak === 1 ? '' : 's') + ' on the trail</span></div>' +
+          '<span class="tag">best ' + s.bestStreak + ' · ' + s.totals.clears + ' temples cleared · ' + s.totals.attempts + ' guardian fights</span>' +
         '</section>' +
         '<section class="panel"><h2 class="px small">LAST 30 DAYS</h2><div class="grid30" role="img" aria-label="Activity over the last 30 days">' + grid + '</div>' +
           '<div class="legend tag"><span>less</span><div class="cell l0"></div><div class="cell l1"></div><div class="cell l2"></div><div class="cell l3"></div><span>more</span></div></section>' +
-        '<section class="panel"><h2 class="px small">RECENT ATTEMPTS</h2>' + rows + '</section>';
+        '<section class="panel"><h2 class="px small">RECENT ENTRIES</h2>' + rows + '</section>';
     }
+    var soundOn = Sfx.isOn(), ambOn = Sfx.ambienceOn();
+    var settings = '<section class="panel"><h2 class="px small">SOUNDS</h2>' +
+      '<button class="toggle-row" role="switch" aria-checked="' + soundOn + '" data-act="' + act(function () { Sfx.setOn(!Sfx.isOn()); Sfx.play('gem'); render(); }) + '"><span>Sound effects</span><span class="toggle ' + (soundOn ? 'on' : '') + '">' + (soundOn ? 'ON' : 'OFF') + '</span></button>' +
+      '<button class="toggle-row" role="switch" aria-checked="' + ambOn + '" data-act="' + act(function () { Sfx.setAmbience(!Sfx.ambienceOn()); render(); }) + '"' + (soundOn ? '' : ' disabled') + '><span>Jungle ambience (wind and birds)</span><span class="toggle ' + (ambOn ? 'on' : '') + '">' + (ambOn ? 'ON' : 'OFF') + '</span></button>' +
+      '</section>';
     return '<div class="screen">' +
-      '<header class="feed-head"><div class="brand-row"><span class="brand">LOG</span>' +
-        '<span class="tag">' + esc(ui.user || '') + ' · ' + esc(syncLabel()) + '</span></div></header>' +
-      '<main class="scroll" data-scroll="log"><div class="body">' + body +
-        '<button class="btn ghost big" data-act="' + act(logout) + '">SIGN OUT</button></div></main>' +
-      nav('log') +
+      '<header class="feed-head jungle-head">' + canopy() + '<div class="brand-row"><div class="brand-col"><span class="brand">JOURNAL</span>' +
+        '<span class="tag">' + esc(ui.user || '') + ' · ' + esc(syncLabel()) + '</span></div>' + soundButton() + '</div></header>' +
+      '<main class="scroll" data-scroll="journal"><div class="body">' + body + settings +
+        '<button class="btn ghost big" data-act="' + act(logout) + '">LEAVE THE JUNGLE (SIGN OUT)</button></div></main>' +
+      nav('journal') +
     '</div>';
   }
-
   function syncLabel() {
     return { idle: 'synced', saving: 'saving…', saved: 'saved to account', offline: 'offline — will retry' }[ui.syncState];
   }
@@ -538,21 +671,21 @@
   function attemptScreen() {
     var a = ui.attempt;
     var head = '<header class="walk-head"><div class="walk-row">' +
-      '<button class="icon-btn" aria-label="Back to log" data-act="' + act(function () { ui.view = 'log'; render(); }) + '">' + ICON.back + '</button>' +
-      '<div class="walk-title"><span class="px">' + esc(a ? a.title : 'Attempt') + '</span><span class="muted">' + esc(a ? when(a.createdAt) : '') + '</span></div></div></header>';
+      '<button class="icon-btn" aria-label="Back to the journal" data-act="' + act(function () { ui.view = 'journal'; render(); }) + '">' + ICON.back + '</button>' +
+      '<div class="walk-title"><span class="px">' + esc(a ? a.title : 'Entry') + '</span><span class="muted">' + esc(a ? when(a.createdAt) : '') + '</span></div></div></header>';
     var body;
     if (!a) body = '<p class="tag blink">LOADING…</p>';
     else {
       var problem = PROBLEMS.filter(function (p) { return p.title === a.title; })[0];
       var qa = (a.answers || []).map(function (ans, i) {
-        var q = problem && problem.steps[i] ? problem.steps[i].q : 'Question ' + (i + 1);
-        return '<div class="note"><span class="px muted" style="font-size:8px">QUEST ' + (i + 1) + '</span><p class="muted">' + esc(q) + '</p><p>' + esc(ans || '—') + '</p></div>';
+        var q = problem && problem.steps[i] ? problem.steps[i].q : 'Marker ' + (i + 1);
+        return '<div class="note"><span class="px muted" style="font-size:8px">MARKER ' + (i + 1) + '</span><p class="muted">' + esc(q) + '</p><p>' + esc(ans || '—') + '</p></div>';
       }).join('');
-      var result = a.passed === false ? 'Failed' + (a.testsTotal ? ' ' + a.testsPassed + '/' + a.testsTotal : '') : a.firstClear ? '+' + a.gemsEarned + ' gems' : 'Passed';
+      var result = a.passed === false ? 'Blocked' + (a.testsTotal ? ' ' + a.testsPassed + '/' + a.testsTotal : '') : a.firstClear ? '+' + a.gemsEarned + ' gems' : 'Passed';
       body = '<div class="stats"><div class="stat"><span class="px">RESULT</span><span>' + esc(result) + '</span></div>' +
         '<div class="stat"><span class="px">LEVEL</span><span>' + esc(a.difficulty) + '</span></div></div>' +
         (a.failure ? '<section class="fail"><span class="px fail-title">WHAT FAILED</span><p>' + esc(a.failure) + '</p></section>' : '') +
-        '<section class="notes"><h2>YOUR ANSWERS</h2>' + qa + '</section>' +
+        '<section class="notes"><h2>YOUR CARVINGS</h2>' + qa + '</section>' +
         '<section class="notes"><h2>YOUR CODE</h2><pre class="example code-view">' + esc(a.code || '(empty)') + '</pre></section>';
     }
     return '<div class="screen">' + head + '<main class="scroll"><div class="body">' + body + '</div></main></div>';
@@ -564,8 +697,8 @@
   function screenHtml() {
     if (ui.view === 'boot') return { html: bootScreen(), key: 'boot' };
     if (ui.view === 'auth') return { html: authScreen(), key: 'auth' };
-    if (ui.view === 'log') return { html: logScreen(), key: 'log' };
-    if (ui.view === 'codex') return { html: codexScreen(), key: 'codex' };
+    if (ui.view === 'journal') return { html: journalScreen(), key: 'journal' };
+    if (ui.view === 'satchel') return { html: satchelScreen(), key: 'satchel' };
     if (ui.view === 'attempt') return { html: attemptScreen(), key: 'attempt' };
     var v = game.renderVals();
     return { html: v.isFeed ? feed(v) : walk(v), key: v.isFeed ? 'feed' : 'walk:' + (v.isStep ? 's' : v.isCode ? 'c' : 'r') };
@@ -579,11 +712,11 @@
     var el = app.querySelector('[data-scroll]');
     if (el) {
       var key = el.getAttribute('data-scroll');
-      if (key === 'feed' || key === 'log') el.scrollTop = scrollMemory[key] || 0;
+      if (key !== 'walk') el.scrollTop = scrollMemory[key] || 0;
       else if (out.key === lastScreen) el.scrollTop = scrollMemory.walk || 0;
       else el.scrollTop = 0;
     }
-    // After a failed boss run, bring the failing test into view (it sits below the editor).
+    // After a failed guardian fight, bring the failing trial into view (it sits below the editor).
     var rep = game.state && game.state.report;
     if (rep && rep !== shownReport) {
       var panel = app.querySelector('.fail');
@@ -599,6 +732,7 @@
   game.onChange = function () {
     runBossIfNeeded();
     recordAttemptIfNew();
+    game.takeCues().forEach(Sfx.play);
     render();
     persist();
   };
@@ -617,13 +751,14 @@
     if (e.target.id === 'auth-form') { e.preventDefault(); submitAuth(e.target); }
   });
   // Typing updates state without re-rendering, so the cursor and keyboard stay put.
+  var ENABLES = { draft: 'commit', ruinDraft: 'ruin-carve', frogDraft: 'enc-primary' };
   app.addEventListener('input', function (e) {
     var field = e.target.getAttribute('data-field');
     if (!field) return;
     var patch = {}; patch[field] = e.target.value;
     game.state = Object.assign({}, game.state, patch);
-    if (field === 'draft') {
-      var btn = document.getElementById('commit');
+    if (ENABLES[field]) {
+      var btn = document.getElementById(ENABLES[field]);
       if (btn) btn.disabled = !e.target.value.trim();
     }
   });

@@ -1,6 +1,7 @@
 # Stepwise
 
-Socratic, 8-bit LeetCode practice. Scroll the Taro 75 like a social feed; each post is one problem.
+Socratic, 8-bit LeetCode practice, styled as a jungle expedition. Scroll the Taro 75 like a social feed
+(the Trail); each post is one temple.
 Opening a post walks you through guiding questions — you type an answer before each reveal — then you
 write the code and get a review. Clearing problems earns gems that unlock the next topics.
 Progress and every attempt are saved to your account, so they follow you across devices.
@@ -13,6 +14,14 @@ Progress and every attempt are saved to your account, so they follow you across 
 - **Unlocks**: family prerequisites, quest prerequisites (Two Sum → 3Sum, LRU → LFU…), mixed gem requirements, and Easy → Medium → Hard tiers.
 - **Shards**: secondary topic tags drop shards; five shards fuse into a gem.
 - **Accounts**: username + password; sign-up needs an invite code.
+- **Jungle theme**: original pixel sprites (toucan hints, temple guardians, vines), Elder Futhark runes, and
+  8-bit sounds synthesized with the Web Audio API (mute and ambience toggles in the Journal).
+- **Daily surprises**:
+  - *Daily rune*: one of 24 runes a day, with a coding saying and a one-day shard blessing; collected on the Runestone.
+  - *Wild encounters*: about 1 in 3 first clears — toucan (free shard), jaguar (no-hint dare, double gems),
+    frog (riddle from a solved problem), monkey (practice peek at a sealed temple). Encounters never take gems.
+  - *Overgrown ruins*: solved problems return after 1, 3, 7, 14 and 30 days for a from-memory answer (spaced review).
+  - *Jungle weather*: a daily modifier — monsoon (double shards), firefly night (more encounters), clear skies (dares ×3).
 - **Log**: day streak, a 30-day activity grid, and every attempt with your answers and code.
 
 - **Boss stage**: your TypeScript runs against real tests. Finishing the quests pays part of the gems; the rest,
