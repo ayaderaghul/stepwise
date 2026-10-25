@@ -83,14 +83,30 @@ linked lists, trees, design classes, and problems with several valid answers.
 | GET | `/api/geocode?q=` | city search for the weather location |
 | GET | `/api/leaderboard?period=all\|week` | every explorer's gold, rank and weekly gold |
 
-## Calling outside services politely
+## Outside services and their terms
 
-Weather and city search go to Open-Meteo first, then MET Norway (weather) or OpenStreetMap Nominatim (search).
-Each service has its own cool-down in `server/world.ts`: a daily-quota refusal pauses it until just after UTC
-midnight, `Retry-After` is obeyed, a 403 pauses it for an hour, and other failures back off 1, 2, 4 … 60 minutes.
-Calls to one service run one at a time (Nominatim at most one per second), lookups for the same place share one
-request, MET Norway readings are kept until their `Expires` time and then revalidated with
-`If-Modified-Since`, and if every service is down the last reading for that place (up to 6 hours old) is served.
+| Service | Used for | What we do to follow its terms |
+| --- | --- | --- |
+| [Open-Meteo](https://open-meteo.com/en/terms) forecast | live weather | free non-commercial use (personal app, no ads); far under 10,000 calls a day; 30-minute cache per ~10 km cell; credit "Weather data by Open-Meteo.com", CC BY 4.0 |
+| [Open-Meteo geocoding](https://open-meteo.com/en/docs/geocoding-api) | city search | same terms; results cached 30 days; credit Open-Meteo / GeoNames, CC BY 4.0 |
+| [MET Norway](https://docs.api.met.no/doc/TermsOfService) Locationforecast | weather fallback | identifying User-Agent with our website; 2-decimal coordinates; HTTPS; `Expires` and `Last-Modified` stored in Postgres, never asked again before `Expires`, then revalidated with `If-Modified-Since`; 203 logged; credit "Weather data from MET Norway", CC BY 4.0 |
+| [OpenStreetMap Nominatim](https://operations.osmfoundation.org/policies/nominatim/) | city search fallback | at most 1 request a second, one at a time; identifying User-Agent; no autocomplete (searches only on FIND); results cached; credit © OpenStreetMap contributors, ODbL |
+
+Fonts (Press Start 2P, VT323, Noto Sans Runic; SIL Open Font License) are self-hosted in `public/fonts`,
+so the page makes no requests to Google or any other outside host. The browser never calls the services above
+directly: the server does, so explorers' IP addresses are not shared. Weather refreshes only while the page is
+open and visible.
+
+**Pauses after failures** (`server/outside.ts`, stored in the `outside_pause` table so they survive restarts).
+Each service has its own:
+- a daily-quota refusal pauses it until just after midnight UTC, when the quota resets;
+- a `Retry-After` header is obeyed, up to a day;
+- a 403 pauses it for an hour, and the page shows "*service*: you are blocked (HTTP 403)";
+- server errors, timeouts and network failures back off 1, 2, 4 … up to 60 minutes;
+- a 400 or 404 is about that one request and does not pause the service.
+
+Requests for the same place share one lookup, and if every service is down the last reading for that place
+(up to 6 hours old) is shown, marked as older.
 
 ## Environment
 

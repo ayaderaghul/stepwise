@@ -20,6 +20,7 @@
     loc: { open: false, results: [], busy: false, error: '', q: '' },
     locSkipped: (function () { try { return localStorage.getItem('stepwise:locskip') === '1'; } catch (e) { return false; } })(),
     wxError: '',
+    notices: [],
     hall: { period: 'all', data: null, loading: false, error: '' },
     atlasFresh: false
   };
@@ -190,7 +191,7 @@
       ui.view = 'game';
       render();
       loadStreak();
-      loadWeather();
+      lastWeatherAt = Date.now(); loadWeather();
       if (useLocal) notify('Brought over the progress saved in this browser.');
     });
   }
@@ -716,14 +717,24 @@
     var place = (game.state || {}).place;
     if (!place) { game.setWeather(null); return; }
     api('/weather?lat=' + encodeURIComponent(place.lat) + '&lon=' + encodeURIComponent(place.lon)).then(function (r) {
+      ui.notices = r.data.notices || [];
       if (!r.ok) { ui.wxError = r.data.error || 'No weather right now.'; game.setWeather(null); render(); return; }
       ui.wxError = '';
       var w = weatherFromCode(r.data.code, r.data.temp);
-      game.setWeather(w ? Object.assign({}, w, { temp: r.data.temp, isDay: r.data.isDay, real: WMO_TEXT[r.data.code] || 'code ' + r.data.code, place: place.name }) : null);
+      game.setWeather(w ? Object.assign({}, w, { temp: r.data.temp, isDay: r.data.isDay, real: WMO_TEXT[r.data.code] || 'code ' + r.data.code, place: place.name,
+        source: r.data.source, stale: !!r.data.stale }) : null);
       render();
     });
   }
-  setInterval(function () { if (ui.user && ui.view !== 'auth') loadWeather(); }, 30 * 60 * 1000);
+  // Refresh every 30 minutes, but only while the page is open and visible (no fetching in the background).
+  var lastWeatherAt = 0;
+  function refreshWeatherIfDue() {
+    if (!ui.user || ui.view === 'auth' || document.visibilityState !== 'visible') return;
+    if (Date.now() - lastWeatherAt < 30 * 60 * 1000) return;
+    lastWeatherAt = Date.now(); loadWeather();
+  }
+  setInterval(refreshWeatherIfDue, 60 * 1000);
+  document.addEventListener('visibilitychange', refreshWeatherIfDue);
 
   function choosePlace(place) {
     ui.loc = { open: false, results: [], busy: false, error: '', q: '' };
@@ -736,8 +747,10 @@
     ui.loc.q = q; ui.loc.busy = true; ui.loc.error = ''; render();
     api('/geocode?q=' + encodeURIComponent(q)).then(function (r) {
       ui.loc.busy = false;
+      ui.notices = r.data.notices || [];
       if (!r.ok) { ui.loc.error = r.data.error || 'Couldn’t search right now.'; render(); return; }
       ui.loc.results = r.data.results || [];
+      ui.loc.source = r.data.source || '';
       if (!ui.loc.results.length) ui.loc.error = 'No city called “' + q + '” on the map. Try another spelling.';
       render();
     });
@@ -766,8 +779,20 @@
       '<form class="city-form" id="city-form" novalidate><label for="city-q" class="px muted" style="font-size:8px">OR TYPE ANY CITY IN THE WORLD</label>' +
         '<div class="city-row"><input id="city-q" name="q" autocomplete="off" placeholder="Rome, Hanoi, Lagos…" value="' + esc(L.q) + '"><button class="btn" type="submit"' + (L.busy ? ' disabled' : '') + '>FIND</button></div></form>' +
       (L.error ? '<p class="error" role="alert">' + esc(L.error) + '</p>' : '') +
-      (results ? '<div class="place-list">' + results + '</div>' : '') +
+      (results ? '<div class="place-list">' + results + '</div>' + credit('geo-' + L.source) : '') + noticeLines() +
     '</section>';
+  }
+
+  // Credits the data licences ask for, and any "you are blocked" notices from the server.
+  var CREDITS = {
+    'open-meteo': '<a href="https://open-meteo.com/" target="_blank" rel="noopener">Weather data by Open-Meteo.com</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>',
+    'met-norway': '<a href="https://api.met.no/" target="_blank" rel="noopener">Weather data from MET Norway</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>, mapped to jungle weather',
+    'geo-open-meteo': 'Places: <a href="https://open-meteo.com/en/docs/geocoding-api" target="_blank" rel="noopener">Open-Meteo</a> / <a href="https://www.geonames.org/" target="_blank" rel="noopener">GeoNames</a> · <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC BY 4.0</a>',
+    'geo-nominatim': 'Places: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> · ODbL'
+  };
+  function credit(key) { return CREDITS[key] ? '<p class="credit">' + CREDITS[key] + '</p>' : ''; }
+  function noticeLines() {
+    return (ui.notices || []).map(function (n) { return '<p class="blocked-notice" role="alert">⚠ ' + esc(n) + '</p>'; }).join('');
   }
 
   // Animated sky over the header, matched to the live weather.
@@ -786,14 +811,15 @@
     var moonLine = m.effect ? '<div class="moon-line">' + sp('moon', 1) + '<span><b class="px" style="font-size:8px">' + esc(m.name.toUpperCase()) + '</b> · ' + esc(m.effect) + (m.key === 'full' && wv.wolfRegion ? ' Tonight it is in ' + esc(wv.wolfRegion.toLowerCase()) + '.' : '') + '</span></div>' : '';
     if (!w) {
       if (!wv.place) return moonLine ? '<section class="weather" style="background:#0E1430;border-color:#C9CFDB">' + moonLine + '</section>' : '';
-      return '<section class="weather" style="background:#18382A;border-color:#2F6146">' + sp('mist', 2) + '<div><span class="px muted" style="font-size:9px">' + esc((wv.place.name || '').toUpperCase()) + '</span><p>' + esc(ui.wxError || 'Reading the sky…') + '</p>' + moonLine + '</div></section>';
+      return '<section class="weather" style="background:#18382A;border-color:#2F6146">' + sp('mist', 2) + '<div><span class="px muted" style="font-size:9px">' + esc((wv.place.name || '').toUpperCase()) + '</span><p>' + esc(ui.wxError || 'Reading the sky…') + '</p>' + noticeLines() + moonLine + '</div></section>';
     }
     var stones = wv.stones.length ? '<div class="stones-row">' + wv.stones.map(function (s, i) {
       return '<button class="vstone' + (s.taken ? ' taken' : '') + '" aria-label="' + (s.taken ? 'Stone collected' : 'Volcanic stone ' + (i + 1) + ': tap for 5 gold') + '" data-act="' + act(s.tap) + '"' + (s.taken ? ' disabled' : '') + '>' + sp('ember', 3) + '<span>' + (s.taken ? '✓' : '+5') + '</span></button>';
     }).join('') + '</div>' : '';
     return '<section class="weather live" style="background:' + w.bg + ';border-color:' + w.color + '">' + sp(w.sprite, 3) +
       '<div style="flex:1;min-width:0"><span class="px" style="font-size:8px;color:var(--muted)">' + esc((w.place || '').toUpperCase()) + (typeof w.temp === 'number' ? ' · ' + Math.round(w.temp) + '°' : '') + ' · ' + esc(w.real || '') + '</span>' +
-      '<span class="px" style="display:block;margin-top:6px;font-size:10px;color:' + w.color + '">' + esc(w.title) + '</span><p>' + esc(w.effect) + '</p>' + stones + moonLine + '</div></section>';
+      '<span class="px" style="display:block;margin-top:6px;font-size:10px;color:' + w.color + '">' + esc(w.title) + '</span><p>' + esc(w.effect) + '</p>' + stones + moonLine +
+      (w.stale ? '<p class="credit">An older reading: the weather services are resting.</p>' : '') + noticeLines() + credit(w.source) + '</div></section>';
   }
 
   function goldChip(wv) {

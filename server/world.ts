@@ -1,99 +1,40 @@
 import { Router, type Response } from 'express';
 import { pool } from './db.js';
 import { requireUser, type AuthedRequest } from './auth.js';
+import { MINUTE, Polite, cacheGet, cachePut, expiresFrom, fetchJson } from './outside.js';
 
 export const world = Router();
 
-// Open-Meteo is free and needs no key. The bases are overridable for tests.
+// Endpoints; overridable for tests.
 const FORECAST = process.env.OPEN_METEO_FORECAST ?? 'https://api.open-meteo.com/v1/forecast';
 const GEOCODE = process.env.OPEN_METEO_GEOCODE ?? 'https://geocoding-api.open-meteo.com/v1/search';
-// Backups when Open-Meteo refuses (its free quota is per IP, and Render's outbound IPs are shared).
 const MET = process.env.MET_FORECAST ?? 'https://api.met.no/weatherapi/locationforecast/2.0/compact';
 const NOMINATIM = process.env.NOMINATIM_SEARCH ?? 'https://nominatim.openstreetmap.org/search';
-const UA = 'stepwise-app/1.0 (+https://stepwise-app-izre.onrender.com)';
+
+const openMeteo = new Polite('open-meteo', 'Open-Meteo weather');
+const openMeteoGeo = new Polite('open-meteo-geocoding', 'Open-Meteo place search');
+const metNo = new Polite('met-norway', 'MET Norway weather');
+const nominatim = new Polite('nominatim', 'OpenStreetMap place search', 1100);
+export const loadPauses = () => Polite.loadAll();
+const notices = () => Polite.all.map((p) => p.blockedNotice()).filter((x): x is string => !!x);
 
 const wrap = (fn: (req: AuthedRequest, res: Response) => Promise<void>) =>
   (req: AuthedRequest, res: Response, next: (err?: unknown) => void) => { fn(req, res).catch(next); };
 
-class UpstreamError extends Error {
-  constructor(message: string, readonly status: number, readonly retryAfterMs: number | null) { super(message); }
-}
-async function getJson(url: string): Promise<unknown> {
-  const r = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': UA } });
-  if (!r.ok) {
-    const ra = r.headers.get('retry-after');
-    const secs = ra && /^\d+$/.test(ra) ? Number(ra) * 1000 : ra ? Date.parse(ra) - Date.now() : NaN;
-    throw new UpstreamError('upstream ' + r.status + ' ' + (await r.text()).slice(0, 200), r.status, Number.isFinite(secs) && secs > 0 ? secs : null);
-  }
-  return r.json();
-}
+type Weather = { code: number | null; temp: number | null; isDay: boolean; source: 'open-meteo' | 'met-norway' };
 
-// ---------------- polite callers: each outside service gets its own cool-down ----------------
-// After a failure we stop calling that service for a while instead of retrying on every request:
-// - a daily-quota refusal waits until just after the next UTC midnight (when Open-Meteo resets);
-// - a Retry-After header is obeyed (up to a day);
-// - 403 (we are blocked) waits an hour;
-// - anything else (5xx, 429, timeouts, network errors) backs off 1, 2, 4 … up to 60 minutes;
-// - 400/404 are about that one request, so they do not trip the cool-down.
-// Calls are also spaced out (minGapMs), which Nominatim's usage policy asks for (1 per second).
-const MINUTE = 60 * 1000;
-class Polite {
-  private until = 0;
-  private failures = 0;
-  private last = 0;
-  private queue: Promise<unknown> = Promise.resolve();
-  constructor(readonly name: string, private readonly minGapMs = 0) {}
-  coolingDown() { return Date.now() < this.until; }
-  async call<T>(fn: () => Promise<T>): Promise<T> {
-    const resting = () => new Error(`${this.name}: cooling down for ${Math.ceil((this.until - Date.now()) / MINUTE)} more min`);
-    if (this.coolingDown()) throw resting();
-    const run = async () => {
-      // Checked again here: a call that queued behind one that just failed must not go out.
-      if (this.coolingDown()) throw resting();
-      const wait = this.last + this.minGapMs - Date.now();
-      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
-      this.last = Date.now();
-      try {
-        const out = await fn();
-        this.failures = 0;
-        return out;
-      } catch (err) {
-        this.trip(err);
-        throw err;
-      }
-    };
-    // One call at a time per service, so a burst of page loads does not become a burst of requests.
-    const next = this.queue.then(run, run);
-    this.queue = next.catch(() => undefined);
-    return next;
-  }
-  private trip(err: unknown) {
-    const e = err as UpstreamError;
-    if (e.status === 400 || e.status === 404) return;
-    this.failures += 1;
-    let ms: number;
-    if (e.status === 429 && /daily|day/i.test(e.message)) {
-      const d = new Date(); d.setUTCHours(24, 5, 0, 0); ms = d.getTime() - Date.now();
-    } else if (e.retryAfterMs) ms = Math.min(e.retryAfterMs, 24 * 60 * MINUTE);
-    else if (e.status === 403) ms = 60 * MINUTE;
-    else ms = Math.min(MINUTE * 2 ** (this.failures - 1), 60 * MINUTE);
-    this.until = Date.now() + ms;
-    console.error(`${this.name} failed (${e.message}); pausing calls for ${Math.round(ms / MINUTE)} min`);
-  }
-}
-const openMeteo = new Polite('open-meteo');
-const openMeteoGeo = new Polite('open-meteo geocoding');
-const metNo = new Polite('met.no');
-const nominatim = new Polite('nominatim', 1100);
-
-type Weather = { code: number | null; temp: number | null; isDay: boolean; timezone: string | null; source: string };
-
-async function openMeteoWeather(lat: number, lon: number): Promise<Weather> {
-  const url = `${FORECAST}?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&current=temperature_2m,weather_code,is_day&timezone=auto`;
-  const j = await getJson(url) as { current?: { temperature_2m?: number; weather_code?: number; is_day?: number }; timezone?: string };
-  return { code: j.current?.weather_code ?? null, temp: j.current?.temperature_2m ?? null, isDay: j.current?.is_day === 1, timezone: j.timezone ?? null, source: 'open-meteo' };
+// ---------------- Open-Meteo ----------------
+async function openMeteoWeather(lat: number, lon: number): Promise<{ data: Weather; expiresAt: number }> {
+  const url = `${FORECAST}?latitude=${lat.toFixed(2)}&longitude=${lon.toFixed(2)}&current=temperature_2m,weather_code,is_day&timezone=auto`;
+  const { body, headers } = await openMeteo.call(() => fetchJson(url));
+  const j = body as { current?: { temperature_2m?: number; weather_code?: number; is_day?: number } };
+  return {
+    data: { code: j.current?.weather_code ?? null, temp: j.current?.temperature_2m ?? null, isDay: j.current?.is_day === 1, source: 'open-meteo' },
+    expiresAt: expiresFrom(headers, 30 * MINUTE),
+  };
 }
 
+// ---------------- MET Norway ----------------
 // MET Norway symbol codes → the WMO codes the game understands.
 export function metToWmo(symbol: string): number {
   const s = symbol.replace(/_(day|night|polartwilight)$/, '');
@@ -107,54 +48,43 @@ export function metToWmo(symbol: string): number {
   if (s === 'partlycloudy') return 2;
   return 3;
 }
-// MET Norway's terms: keep each reading until its Expires time, then revalidate with If-Modified-Since
-// (a 304 means the stored reading is still current). Coordinates are rounded to 2 decimals, so nearby
-// requests share one entry.
-type MetEntry = { data: Weather; expires: number; lastModified: string | null };
-const metStore = new Map<string, MetEntry>();
-function expiresFrom(h: Headers): number {
-  const t = Date.parse(h.get('expires') ?? '');
-  // No usable Expires: fall back to 30 minutes.
-  return Number.isFinite(t) && t > Date.now() ? t : Date.now() + 30 * MINUTE;
-}
-export async function metWeather(lat: number, lon: number): Promise<Weather & { expires: number }> {
-  const key = lat.toFixed(2) + ',' + lon.toFixed(2);
-  const stored = metStore.get(key);
-  if (stored && Date.now() < stored.expires) return { ...stored.data, expires: stored.expires };
-  const headers: Record<string, string> = { 'User-Agent': UA };
-  if (stored?.lastModified) headers['If-Modified-Since'] = stored.lastModified;
-  const r = await fetch(`${MET}?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`, { signal: AbortSignal.timeout(6000), headers });
-  if (r.status === 304 && stored) {
-    stored.expires = expiresFrom(r.headers);
-    stored.lastModified = r.headers.get('last-modified') ?? stored.lastModified;
-    return { ...stored.data, expires: stored.expires };
-  }
-  if (!r.ok) {
-    const ra = r.headers.get('retry-after');
-    throw new UpstreamError('upstream ' + r.status + ' ' + (await r.text()).slice(0, 200), r.status, ra && /^\d+$/.test(ra) ? Number(ra) * 1000 : null);
-  }
-  const j = await r.json() as {
-    properties?: { timeseries?: Array<{ data?: { instant?: { details?: { air_temperature?: number } }; next_1_hours?: { summary?: { symbol_code?: string } }; next_6_hours?: { summary?: { symbol_code?: string } } } }> };
-  };
+function readMet(body: unknown): Weather {
+  const j = body as { properties?: { timeseries?: Array<{ data?: { instant?: { details?: { air_temperature?: number } };
+    next_1_hours?: { summary?: { symbol_code?: string } }; next_6_hours?: { summary?: { symbol_code?: string } } } }> } };
   const now = j.properties?.timeseries?.[0]?.data;
   const symbol = now?.next_1_hours?.summary?.symbol_code ?? now?.next_6_hours?.summary?.symbol_code;
-  if (!symbol) throw new Error('MET: no symbol in response');
-  const data: Weather = { code: metToWmo(symbol), temp: now?.instant?.details?.air_temperature ?? null, isDay: !/_night$/.test(symbol), timezone: null, source: 'met.no' };
-  const entry = { data, expires: expiresFrom(r.headers), lastModified: r.headers.get('last-modified') };
-  metStore.delete(key); metStore.set(key, entry);
-  if (metStore.size > 2000) metStore.delete(metStore.keys().next().value as string);
-  return { ...data, expires: entry.expires };
+  if (!symbol) throw new Error('MET Norway: no weather symbol in the response');
+  return { code: metToWmo(symbol), temp: now?.instant?.details?.air_temperature ?? null, isDay: !/_night$/.test(symbol), source: 'met-norway' };
+}
+// Expires and Last-Modified are stored in Postgres (outside_cache), so they survive a restart:
+// before Expires we never ask again; after it we revalidate with If-Modified-Since.
+export async function metWeather(lat: number, lon: number): Promise<{ data: Weather; expiresAt: number }> {
+  const qlat = lat.toFixed(2), qlon = lon.toFixed(2); // MET allows at most 4 decimals; 2 lets neighbours share
+  const key = `met:${qlat},${qlon}`;
+  const stored = await cacheGet(key);
+  if (stored && Date.now() < stored.expiresAt) return { data: readMet(stored.body), expiresAt: stored.expiresAt };
+  const r = await metNo.call(() => fetchJson(`${MET}?lat=${qlat}&lon=${qlon}`, stored?.lastModified));
+  if (r.status === 203) console.warn('MET Norway says this product version is deprecated (HTTP 203)');
+  const expiresAt = expiresFrom(r.headers, 30 * MINUTE);
+  const lastModified = r.headers.get('last-modified') ?? stored?.lastModified ?? null;
+  if (r.status === 304 && stored) {
+    await cachePut(key, stored.body, expiresAt, lastModified);
+    return { data: readMet(stored.body), expiresAt };
+  }
+  const data = readMet(r.body);
+  await cachePut(key, r.body, expiresAt, lastModified);
+  return { data, expiresAt };
 }
 
-// ---------------- weather: cached for 30 minutes per ~10 km grid cell ----------------
-// If every service is down, the last reading for that cell (up to 6 hours old) is served instead.
-const weatherCache = new Map<string, { at: number; until: number; data: Weather }>();
-const inflight = new Map<string, Promise<Weather & { expires?: number }>>();
-async function lookupWeather(lat: number, lon: number): Promise<Weather & { expires?: number }> {
-  try { return await openMeteo.call(() => openMeteoWeather(lat, lon)); } catch (first) {
-    if (!openMeteo.coolingDown()) console.error('open-meteo weather failed:', (first as Error).message);
-    return metNo.call(() => metWeather(lat, lon));
-  }
+// ---------------- /api/weather ----------------
+// Each ~10 km cell is kept for 30 minutes, or until MET Norway's Expires if that is later. If every
+// service fails, the last reading for the cell (up to 6 hours old) is served, marked stale.
+const inflight = new Map<string, Promise<Weather>>();
+async function freshWeather(key: string, lat: number, lon: number): Promise<Weather> {
+  let got: { data: Weather; expiresAt: number };
+  try { got = await openMeteoWeather(lat, lon); } catch { got = await metWeather(lat, lon); }
+  await cachePut(key, got.data, Math.max(Date.now() + 30 * MINUTE, got.expiresAt));
+  return got.data;
 }
 
 world.get('/weather', requireUser, wrap(async (req, res) => {
@@ -163,54 +93,52 @@ world.get('/weather', requireUser, wrap(async (req, res) => {
     res.status(400).json({ error: 'Bad coordinates.' });
     return;
   }
-  const key = lat.toFixed(1) + ',' + lon.toFixed(1);
-  const hit = weatherCache.get(key);
-  if (hit && Date.now() < hit.until) { res.json(hit.data); return; }
+  const key = `wx:${lat.toFixed(1)},${lon.toFixed(1)}`;
+  const hit = await cacheGet(key);
+  if (hit && Date.now() < hit.expiresAt) { res.json({ ...(hit.body as Weather), notices: notices() }); return; }
   try {
-    // Requests for the same cell while a lookup is running share that one lookup.
-    let pending = inflight.get(key);
-    if (!pending) {
-      pending = lookupWeather(lat, lon).finally(() => inflight.delete(key));
-      inflight.set(key, pending);
-    }
-    const { expires, ...data } = await pending;
-    // Keep it 30 minutes, or longer if MET Norway says the reading is good for longer.
-    const until = Math.max(Date.now() + 30 * MINUTE, expires ?? 0);
-    weatherCache.delete(key);
-    weatherCache.set(key, { at: Date.now(), until, data });
-    if (weatherCache.size > 2000) weatherCache.delete(weatherCache.keys().next().value as string);
-    res.json(data);
+    let pending = inflight.get(key); // requests for the same cell share one lookup
+    if (!pending) { pending = freshWeather(key, lat, lon).finally(() => inflight.delete(key)); inflight.set(key, pending); }
+    res.json({ ...(await pending), notices: notices() });
   } catch (err) {
     console.error('weather lookup failed:', (err as Error).message);
-    if (hit && Date.now() - hit.at < 6 * 60 * MINUTE) { res.json({ ...hit.data, stale: true }); return; }
-    res.status(502).json({ error: 'The weather spirits are quiet right now. Try again later.' });
+    if (hit && Date.now() - hit.fetchedAt < 6 * 60 * MINUTE) { res.json({ ...(hit.body as Weather), stale: true, notices: notices() }); return; }
+    res.status(502).json({ error: 'The weather spirits are quiet right now. Try again later.', notices: notices() });
   }
 }));
 
-world.get('/geocode', requireUser, wrap(async (req, res) => {
-  const q = String(req.query.q ?? '').trim().slice(0, 80);
-  if (q.length < 2) { res.status(400).json({ error: 'Type at least two letters.' }); return; }
-  const round = (n: number) => Math.round(n * 1000) / 1000;
+// ---------------- /api/geocode ----------------
+// Searches run only when the explorer presses FIND (Nominatim forbids autocomplete). Results are cached for
+// 30 days (an empty result for 1 day), so the same city is never asked twice.
+type Place = { name: string; country: string; region: string; lat: number; lon: number };
+const round = (n: number) => Math.round(n * 1000) / 1000;
+async function searchPlaces(q: string): Promise<{ results: Place[]; source: 'open-meteo' | 'nominatim' }> {
   try {
-    let results;
-    try {
-      const j = await openMeteoGeo.call(() => getJson(`${GEOCODE}?name=${encodeURIComponent(q)}&count=6&language=en&format=json`)) as {
-        results?: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>;
-      };
-      results = (j.results ?? []).map((r) => ({ name: r.name, country: r.country ?? '', region: r.admin1 ?? '', lat: round(r.latitude), lon: round(r.longitude) }));
-    } catch (first) {
-      if (!openMeteoGeo.coolingDown()) console.error('open-meteo geocode failed:', (first as Error).message);
-      const j = await nominatim.call(() => getJson(`${NOMINATIM}?q=${encodeURIComponent(q)}&format=jsonv2&limit=6&addressdetails=1&accept-language=en`)) as
-        Array<{ name?: string; display_name: string; lat: string; lon: string; address?: { country?: string; state?: string; region?: string } }>;
-      results = j.map((r) => ({
-        name: r.name || r.display_name.split(',')[0], country: r.address?.country ?? '', region: r.address?.state ?? r.address?.region ?? '',
-        lat: round(Number(r.lat)), lon: round(Number(r.lon))
-      }));
-    }
-    res.json({ results });
+    const { body } = await openMeteoGeo.call(() => fetchJson(`${GEOCODE}?name=${encodeURIComponent(q)}&count=6&language=en&format=json`));
+    const j = body as { results?: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }> };
+    return { source: 'open-meteo', results: (j.results ?? []).map((r) => ({ name: r.name, country: r.country ?? '', region: r.admin1 ?? '', lat: round(r.latitude), lon: round(r.longitude) })) };
+  } catch {
+    const { body } = await nominatim.call(() => fetchJson(`${NOMINATIM}?q=${encodeURIComponent(q)}&format=jsonv2&limit=6&addressdetails=1&accept-language=en`));
+    const j = body as Array<{ name?: string; display_name: string; lat: string; lon: string; address?: { country?: string; state?: string; region?: string } }>;
+    return { source: 'nominatim', results: j.map((r) => ({
+      name: r.name || r.display_name.split(',')[0], country: r.address?.country ?? '', region: r.address?.state ?? r.address?.region ?? '',
+      lat: round(Number(r.lat)), lon: round(Number(r.lon)),
+    })) };
+  }
+}
+world.get('/geocode', requireUser, wrap(async (req, res) => {
+  const q = String(req.query.q ?? '').trim().replace(/\s+/g, ' ').slice(0, 80);
+  if (q.length < 2) { res.status(400).json({ error: 'Type at least two letters.' }); return; }
+  const key = 'geo:' + q.toLowerCase();
+  const hit = await cacheGet(key);
+  if (hit && Date.now() < hit.expiresAt) { res.json({ ...(hit.body as object), notices: notices() }); return; }
+  try {
+    const found = await searchPlaces(q);
+    await cachePut(key, found, Date.now() + (found.results.length ? 30 * 24 * 60 : 24 * 60) * MINUTE);
+    res.json({ ...found, notices: notices() });
   } catch (err) {
-    console.error('geocode failed:', (err as Error).message);
-    res.status(502).json({ error: 'Couldn’t search for places right now.' });
+    console.error('place search failed:', (err as Error).message);
+    res.status(502).json({ error: 'Couldn’t search for places right now.', notices: notices() });
   }
 }));
 

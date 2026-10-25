@@ -62,9 +62,30 @@ ALTER TABLE attempts ADD COLUMN IF NOT EXISTS passed BOOLEAN NOT NULL DEFAULT tr
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS tests_passed INTEGER;
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS tests_total INTEGER;
 ALTER TABLE attempts ADD COLUMN IF NOT EXISTS failure TEXT;
+
+-- Responses from outside services (weather, place search), kept as long as each service allows,
+-- so a restart does not re-download them. MET Norway's Expires and Last-Modified live here.
+CREATE TABLE IF NOT EXISTS outside_cache (
+  key           TEXT PRIMARY KEY,
+  body          JSONB NOT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  last_modified TEXT,
+  fetched_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- One row per outside service: while paused_until is in the future, the server does not call it.
+CREATE TABLE IF NOT EXISTS outside_pause (
+  service      TEXT PRIMARY KEY,
+  paused_until TIMESTAMPTZ NOT NULL,
+  failures     INTEGER NOT NULL DEFAULT 0,
+  last_status  INTEGER,
+  reason       TEXT,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `;
 
 export async function migrate(): Promise<void> {
   await pool.query(SCHEMA);
   await pool.query('DELETE FROM sessions WHERE expires_at < now()');
+  await pool.query("DELETE FROM outside_cache WHERE expires_at < now() - interval '1 day' AND key NOT LIKE 'met:%'");
 }

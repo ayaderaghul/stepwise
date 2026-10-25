@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { migrate, pool } from './db.js';
 import { loadUser } from './auth.js';
 import { api } from './routes.js';
-import { world } from './world.js';
+import { loadPauses, world } from './world.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, '..', 'public');
@@ -18,8 +18,8 @@ app.use((_req, res, next) => {
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
-      "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'",
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+      "font-src 'self'; img-src 'self' data:; connect-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'",
   );
   next();
 });
@@ -48,5 +48,6 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 
 const port = Number(process.env.PORT) || 3000;
 migrate()
+  .then(loadPauses)
   .then(() => app.listen(port, () => console.log(`Stepwise listening on :${port}`)))
   .catch((err) => { console.error('Database setup failed:', err); process.exit(1); });

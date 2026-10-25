@@ -425,3 +425,6 @@ input { padding: 10px 12px; border: 3px solid var(--line); background: var(--dee
 .fairy-bubble p + p { margin-top: 8px; color: #FFF6B0; }
 .fairy-bubble .px { color: #CFF7FF; }
 @media (prefers-reduced-motion: reduce) { .fairy-glow { animation: none; } }
+.credit { margin: 8px 0 0; font-size: 16px; line-height: 1.1; color: var(--muted); }
+.credit a { color: var(--muted); }
+.blocked-notice { margin: 8px 0 0; padding: 6px 8px; font-size: 18px; line-height: 1.1; color: #FFD0C0; background: #3A1F19; border: 2px solid var(--clay); }
