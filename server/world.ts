@@ -107,21 +107,50 @@ export function metToWmo(symbol: string): number {
   if (s === 'partlycloudy') return 2;
   return 3;
 }
-async function metWeather(lat: number, lon: number): Promise<Weather> {
-  const j = await getJson(`${MET}?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`) as {
+// MET Norway's terms: keep each reading until its Expires time, then revalidate with If-Modified-Since
+// (a 304 means the stored reading is still current). Coordinates are rounded to 2 decimals, so nearby
+// requests share one entry.
+type MetEntry = { data: Weather; expires: number; lastModified: string | null };
+const metStore = new Map<string, MetEntry>();
+function expiresFrom(h: Headers): number {
+  const t = Date.parse(h.get('expires') ?? '');
+  // No usable Expires: fall back to 30 minutes.
+  return Number.isFinite(t) && t > Date.now() ? t : Date.now() + 30 * MINUTE;
+}
+export async function metWeather(lat: number, lon: number): Promise<Weather & { expires: number }> {
+  const key = lat.toFixed(2) + ',' + lon.toFixed(2);
+  const stored = metStore.get(key);
+  if (stored && Date.now() < stored.expires) return { ...stored.data, expires: stored.expires };
+  const headers: Record<string, string> = { 'User-Agent': UA };
+  if (stored?.lastModified) headers['If-Modified-Since'] = stored.lastModified;
+  const r = await fetch(`${MET}?lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`, { signal: AbortSignal.timeout(6000), headers });
+  if (r.status === 304 && stored) {
+    stored.expires = expiresFrom(r.headers);
+    stored.lastModified = r.headers.get('last-modified') ?? stored.lastModified;
+    return { ...stored.data, expires: stored.expires };
+  }
+  if (!r.ok) {
+    const ra = r.headers.get('retry-after');
+    throw new UpstreamError('upstream ' + r.status + ' ' + (await r.text()).slice(0, 200), r.status, ra && /^\d+$/.test(ra) ? Number(ra) * 1000 : null);
+  }
+  const j = await r.json() as {
     properties?: { timeseries?: Array<{ data?: { instant?: { details?: { air_temperature?: number } }; next_1_hours?: { summary?: { symbol_code?: string } }; next_6_hours?: { summary?: { symbol_code?: string } } } }> };
   };
   const now = j.properties?.timeseries?.[0]?.data;
   const symbol = now?.next_1_hours?.summary?.symbol_code ?? now?.next_6_hours?.summary?.symbol_code;
   if (!symbol) throw new Error('MET: no symbol in response');
-  return { code: metToWmo(symbol), temp: now?.instant?.details?.air_temperature ?? null, isDay: !/_night$/.test(symbol), timezone: null, source: 'met.no' };
+  const data: Weather = { code: metToWmo(symbol), temp: now?.instant?.details?.air_temperature ?? null, isDay: !/_night$/.test(symbol), timezone: null, source: 'met.no' };
+  const entry = { data, expires: expiresFrom(r.headers), lastModified: r.headers.get('last-modified') };
+  metStore.delete(key); metStore.set(key, entry);
+  if (metStore.size > 2000) metStore.delete(metStore.keys().next().value as string);
+  return { ...data, expires: entry.expires };
 }
 
 // ---------------- weather: cached for 30 minutes per ~10 km grid cell ----------------
 // If every service is down, the last reading for that cell (up to 6 hours old) is served instead.
-const weatherCache = new Map<string, { at: number; data: Weather }>();
-const inflight = new Map<string, Promise<Weather>>();
-async function lookupWeather(lat: number, lon: number): Promise<Weather> {
+const weatherCache = new Map<string, { at: number; until: number; data: Weather }>();
+const inflight = new Map<string, Promise<Weather & { expires?: number }>>();
+async function lookupWeather(lat: number, lon: number): Promise<Weather & { expires?: number }> {
   try { return await openMeteo.call(() => openMeteoWeather(lat, lon)); } catch (first) {
     if (!openMeteo.coolingDown()) console.error('open-meteo weather failed:', (first as Error).message);
     return metNo.call(() => metWeather(lat, lon));
@@ -136,7 +165,7 @@ world.get('/weather', requireUser, wrap(async (req, res) => {
   }
   const key = lat.toFixed(1) + ',' + lon.toFixed(1);
   const hit = weatherCache.get(key);
-  if (hit && Date.now() - hit.at < 30 * MINUTE) { res.json(hit.data); return; }
+  if (hit && Date.now() < hit.until) { res.json(hit.data); return; }
   try {
     // Requests for the same cell while a lookup is running share that one lookup.
     let pending = inflight.get(key);
@@ -144,9 +173,11 @@ world.get('/weather', requireUser, wrap(async (req, res) => {
       pending = lookupWeather(lat, lon).finally(() => inflight.delete(key));
       inflight.set(key, pending);
     }
-    const data = await pending;
+    const { expires, ...data } = await pending;
+    // Keep it 30 minutes, or longer if MET Norway says the reading is good for longer.
+    const until = Math.max(Date.now() + 30 * MINUTE, expires ?? 0);
     weatherCache.delete(key);
-    weatherCache.set(key, { at: Date.now(), data });
+    weatherCache.set(key, { at: Date.now(), until, data });
     if (weatherCache.size > 2000) weatherCache.delete(weatherCache.keys().next().value as string);
     res.json(data);
   } catch (err) {

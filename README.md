@@ -89,7 +89,8 @@ Weather and city search go to Open-Meteo first, then MET Norway (weather) or Ope
 Each service has its own cool-down in `server/world.ts`: a daily-quota refusal pauses it until just after UTC
 midnight, `Retry-After` is obeyed, a 403 pauses it for an hour, and other failures back off 1, 2, 4 … 60 minutes.
 Calls to one service run one at a time (Nominatim at most one per second), lookups for the same place share one
-request, and if every service is down the last reading for that place (up to 6 hours old) is served.
+request, MET Norway readings are kept until their `Expires` time and then revalidated with
+`If-Modified-Since`, and if every service is down the last reading for that place (up to 6 hours old) is served.
 
 ## Environment
 
