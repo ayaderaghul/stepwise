@@ -15,11 +15,76 @@ const UA = 'stepwise-app/1.0 (+https://stepwise-app-izre.onrender.com)';
 const wrap = (fn: (req: AuthedRequest, res: Response) => Promise<void>) =>
   (req: AuthedRequest, res: Response, next: (err?: unknown) => void) => { fn(req, res).catch(next); };
 
+class UpstreamError extends Error {
+  constructor(message: string, readonly status: number, readonly retryAfterMs: number | null) { super(message); }
+}
 async function getJson(url: string): Promise<unknown> {
   const r = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': UA } });
-  if (!r.ok) throw new Error('upstream ' + r.status + ' ' + (await r.text()).slice(0, 200));
+  if (!r.ok) {
+    const ra = r.headers.get('retry-after');
+    const secs = ra && /^\d+$/.test(ra) ? Number(ra) * 1000 : ra ? Date.parse(ra) - Date.now() : NaN;
+    throw new UpstreamError('upstream ' + r.status + ' ' + (await r.text()).slice(0, 200), r.status, Number.isFinite(secs) && secs > 0 ? secs : null);
+  }
   return r.json();
 }
+
+// ---------------- polite callers: each outside service gets its own cool-down ----------------
+// After a failure we stop calling that service for a while instead of retrying on every request:
+// - a daily-quota refusal waits until just after the next UTC midnight (when Open-Meteo resets);
+// - a Retry-After header is obeyed (up to a day);
+// - 403 (we are blocked) waits an hour;
+// - anything else (5xx, 429, timeouts, network errors) backs off 1, 2, 4 … up to 60 minutes;
+// - 400/404 are about that one request, so they do not trip the cool-down.
+// Calls are also spaced out (minGapMs), which Nominatim's usage policy asks for (1 per second).
+const MINUTE = 60 * 1000;
+class Polite {
+  private until = 0;
+  private failures = 0;
+  private last = 0;
+  private queue: Promise<unknown> = Promise.resolve();
+  constructor(readonly name: string, private readonly minGapMs = 0) {}
+  coolingDown() { return Date.now() < this.until; }
+  async call<T>(fn: () => Promise<T>): Promise<T> {
+    const resting = () => new Error(`${this.name}: cooling down for ${Math.ceil((this.until - Date.now()) / MINUTE)} more min`);
+    if (this.coolingDown()) throw resting();
+    const run = async () => {
+      // Checked again here: a call that queued behind one that just failed must not go out.
+      if (this.coolingDown()) throw resting();
+      const wait = this.last + this.minGapMs - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      this.last = Date.now();
+      try {
+        const out = await fn();
+        this.failures = 0;
+        return out;
+      } catch (err) {
+        this.trip(err);
+        throw err;
+      }
+    };
+    // One call at a time per service, so a burst of page loads does not become a burst of requests.
+    const next = this.queue.then(run, run);
+    this.queue = next.catch(() => undefined);
+    return next;
+  }
+  private trip(err: unknown) {
+    const e = err as UpstreamError;
+    if (e.status === 400 || e.status === 404) return;
+    this.failures += 1;
+    let ms: number;
+    if (e.status === 429 && /daily|day/i.test(e.message)) {
+      const d = new Date(); d.setUTCHours(24, 5, 0, 0); ms = d.getTime() - Date.now();
+    } else if (e.retryAfterMs) ms = Math.min(e.retryAfterMs, 24 * 60 * MINUTE);
+    else if (e.status === 403) ms = 60 * MINUTE;
+    else ms = Math.min(MINUTE * 2 ** (this.failures - 1), 60 * MINUTE);
+    this.until = Date.now() + ms;
+    console.error(`${this.name} failed (${e.message}); pausing calls for ${Math.round(ms / MINUTE)} min`);
+  }
+}
+const openMeteo = new Polite('open-meteo');
+const openMeteoGeo = new Polite('open-meteo geocoding');
+const metNo = new Polite('met.no');
+const nominatim = new Polite('nominatim', 1100);
 
 type Weather = { code: number | null; temp: number | null; isDay: boolean; timezone: string | null; source: string };
 
@@ -53,7 +118,15 @@ async function metWeather(lat: number, lon: number): Promise<Weather> {
 }
 
 // ---------------- weather: cached for 30 minutes per ~10 km grid cell ----------------
-const weatherCache = new Map<string, { at: number; data: unknown }>();
+// If every service is down, the last reading for that cell (up to 6 hours old) is served instead.
+const weatherCache = new Map<string, { at: number; data: Weather }>();
+const inflight = new Map<string, Promise<Weather>>();
+async function lookupWeather(lat: number, lon: number): Promise<Weather> {
+  try { return await openMeteo.call(() => openMeteoWeather(lat, lon)); } catch (first) {
+    if (!openMeteo.coolingDown()) console.error('open-meteo weather failed:', (first as Error).message);
+    return metNo.call(() => metWeather(lat, lon));
+  }
+}
 
 world.get('/weather', requireUser, wrap(async (req, res) => {
   const lat = Number(req.query.lat), lon = Number(req.query.lon);
@@ -63,18 +136,22 @@ world.get('/weather', requireUser, wrap(async (req, res) => {
   }
   const key = lat.toFixed(1) + ',' + lon.toFixed(1);
   const hit = weatherCache.get(key);
-  if (hit && Date.now() - hit.at < 30 * 60 * 1000) { res.json(hit.data); return; }
+  if (hit && Date.now() - hit.at < 30 * MINUTE) { res.json(hit.data); return; }
   try {
-    let data: Weather;
-    try { data = await openMeteoWeather(lat, lon); } catch (first) {
-      console.error('open-meteo weather failed, trying met.no:', (first as Error).message);
-      data = await metWeather(lat, lon);
+    // Requests for the same cell while a lookup is running share that one lookup.
+    let pending = inflight.get(key);
+    if (!pending) {
+      pending = lookupWeather(lat, lon).finally(() => inflight.delete(key));
+      inflight.set(key, pending);
     }
+    const data = await pending;
+    weatherCache.delete(key);
     weatherCache.set(key, { at: Date.now(), data });
     if (weatherCache.size > 2000) weatherCache.delete(weatherCache.keys().next().value as string);
     res.json(data);
   } catch (err) {
-    console.error('weather lookup failed:', (err as Error).message, (err as { cause?: unknown }).cause ?? '');
+    console.error('weather lookup failed:', (err as Error).message);
+    if (hit && Date.now() - hit.at < 6 * 60 * MINUTE) { res.json({ ...hit.data, stale: true }); return; }
     res.status(502).json({ error: 'The weather spirits are quiet right now. Try again later.' });
   }
 }));
@@ -86,13 +163,13 @@ world.get('/geocode', requireUser, wrap(async (req, res) => {
   try {
     let results;
     try {
-      const j = await getJson(`${GEOCODE}?name=${encodeURIComponent(q)}&count=6&language=en&format=json`) as {
+      const j = await openMeteoGeo.call(() => getJson(`${GEOCODE}?name=${encodeURIComponent(q)}&count=6&language=en&format=json`)) as {
         results?: Array<{ name: string; latitude: number; longitude: number; country?: string; admin1?: string }>;
       };
       results = (j.results ?? []).map((r) => ({ name: r.name, country: r.country ?? '', region: r.admin1 ?? '', lat: round(r.latitude), lon: round(r.longitude) }));
     } catch (first) {
-      console.error('open-meteo geocode failed, trying nominatim:', (first as Error).message);
-      const j = await getJson(`${NOMINATIM}?q=${encodeURIComponent(q)}&format=jsonv2&limit=6&addressdetails=1&accept-language=en`) as
+      if (!openMeteoGeo.coolingDown()) console.error('open-meteo geocode failed:', (first as Error).message);
+      const j = await nominatim.call(() => getJson(`${NOMINATIM}?q=${encodeURIComponent(q)}&format=jsonv2&limit=6&addressdetails=1&accept-language=en`)) as
         Array<{ name?: string; display_name: string; lat: string; lon: string; address?: { country?: string; state?: string; region?: string } }>;
       results = j.map((r) => ({
         name: r.name || r.display_name.split(',')[0], country: r.address?.country ?? '', region: r.address?.state ?? r.address?.region ?? '',
@@ -101,7 +178,7 @@ world.get('/geocode', requireUser, wrap(async (req, res) => {
     }
     res.json({ results });
   } catch (err) {
-    console.error('geocode failed:', (err as Error).message, (err as { cause?: unknown }).cause ?? '');
+    console.error('geocode failed:', (err as Error).message);
     res.status(502).json({ error: 'Couldn’t search for places right now.' });
   }
 }));
@@ -152,11 +229,3 @@ world.get('/leaderboard', requireUser, wrap(async (req, res) => {
   board.sort((a, b) => (period === 'week' ? b.week - a.week || b.gold - a.gold : b.gold - a.gold || b.week - a.week) || a.username.localeCompare(b.username));
   res.json({ period, explorers: board.slice(0, 100).map((e, i) => ({ place: i + 1, ...e })) });
 }));
-
-// One probe at start-up, so the logs show whether the weather service is reachable from this host.
-export function probeWeather() {
-  openMeteoWeather(41.9, 12.5).then((w) => console.log('weather probe ok (open-meteo):', JSON.stringify(w)))
-    .catch((err) => console.error('weather probe: open-meteo failed:', (err as Error).message));
-  metWeather(41.9, 12.5).then((w) => console.log('weather probe ok (met.no):', JSON.stringify(w)))
-    .catch((err) => console.error('weather probe: met.no failed:', (err as Error).message));
-}

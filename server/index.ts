@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { migrate, pool } from './db.js';
 import { loadUser } from './auth.js';
 import { api } from './routes.js';
-import { probeWeather, world } from './world.js';
+import { world } from './world.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(here, '..', 'public');
@@ -48,5 +48,5 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 
 const port = Number(process.env.PORT) || 3000;
 migrate()
-  .then(() => app.listen(port, () => { console.log(`Stepwise listening on :${port}`); probeWeather(); }))
+  .then(() => app.listen(port, () => console.log(`Stepwise listening on :${port}`)))
   .catch((err) => { console.error('Database setup failed:', err); process.exit(1); });

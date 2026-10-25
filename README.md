@@ -79,9 +79,17 @@ linked lists, trees, design classes, and problems with several valid answers.
 | POST | `/api/attempts` | `{ title, rank, family, difficulty, answers[], code, firstClear, gemsEarned }` |
 | GET | `/api/attempts`, `/api/attempts/:id` | history and one attempt |
 | GET | `/api/stats?tz=Europe/Rome` | streak, best streak, last 30 days |
-| GET | `/api/weather?lat=&lon=` | current weather code and temperature (Open-Meteo, cached 30 min) |
+| GET | `/api/weather?lat=&lon=` | current weather code and temperature (Open-Meteo, else MET Norway; cached 30 min) |
 | GET | `/api/geocode?q=` | city search for the weather location |
 | GET | `/api/leaderboard?period=all\|week` | every explorer's gold, rank and weekly gold |
+
+## Calling outside services politely
+
+Weather and city search go to Open-Meteo first, then MET Norway (weather) or OpenStreetMap Nominatim (search).
+Each service has its own cool-down in `server/world.ts`: a daily-quota refusal pauses it until just after UTC
+midnight, `Retry-After` is obeyed, a 403 pauses it for an hour, and other failures back off 1, 2, 4 … 60 minutes.
+Calls to one service run one at a time (Nominatim at most one per second), lookups for the same place share one
+request, and if every service is down the last reading for that place (up to 6 hours old) is served.
 
 ## Environment
 
