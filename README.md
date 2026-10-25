@@ -101,7 +101,11 @@ open and visible.
 Each service has its own:
 - a daily-quota refusal pauses it until just after midnight UTC, when the quota resets;
 - a `Retry-After` header is obeyed, up to a day;
-- a 403 pauses it for an hour, and the page shows "*service*: you are blocked (HTTP 403)";
+- a 403 pauses it for an hour; if the try after that hour is blocked again, a day; if the try after that day
+  is still blocked, the service is stopped for good. The page shows "*service*: you are blocked (HTTP 403)"
+  at every step. A successful call resets the count. To try a stopped service again:
+  `DELETE FROM outside_pause WHERE service = 'nominatim';` (names: `open-meteo`, `open-meteo-geocoding`,
+  `met-norway`, `nominatim`), then restart;
 - server errors, timeouts and network failures back off 1, 2, 4 … up to 60 minutes;
 - a 400 or 404 is about that one request and does not pause the service.
 

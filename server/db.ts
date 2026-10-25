@@ -82,6 +82,9 @@ CREATE TABLE IF NOT EXISTS outside_pause (
   reason       TEXT,
   updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- 403s in a row, and whether the service has been stopped after three of them.
+ALTER TABLE outside_pause ADD COLUMN IF NOT EXISTS blocks INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE outside_pause ADD COLUMN IF NOT EXISTS stopped BOOLEAN NOT NULL DEFAULT false;
 `;
 
 export async function migrate(): Promise<void> {
