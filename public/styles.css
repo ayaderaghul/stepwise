@@ -351,7 +351,7 @@ input { padding: 10px 12px; border: 3px solid var(--line); background: var(--dee
 .region-flags { display: flex; align-items: center; gap: 8px; }
 .qmark { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 18px; padding: 0 3px; background: var(--rune); color: var(--ground); font-family: var(--pixel); font-size: 8px; animation: blink-q 1.4s steps(2) infinite; }
 @keyframes blink-q { 50% { transform: translateY(-2px); } }
-.you { display: inline-flex; align-items: center; gap: 4px; font-family: var(--pixel); font-size: 7px; color: var(--gold); }
+span.you { display: inline-flex; align-items: center; gap: 4px; font-family: var(--pixel); font-size: 7px; color: var(--gold); }
 .mini-temples { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; }
 .mini-temple { opacity: .9; } .mini-temple.locked { opacity: .35; filter: grayscale(1); }
 .mini-temple.solved { border-bottom: 2px solid var(--gold); padding-bottom: 1px; }
@@ -428,3 +428,5 @@ input { padding: 10px 12px; border: 3px solid var(--line); background: var(--dee
 .credit { margin: 8px 0 0; font-size: 16px; line-height: 1.1; color: var(--muted); }
 .credit a { color: var(--muted); }
 .blocked-notice { margin: 8px 0 0; padding: 6px 8px; font-size: 18px; line-height: 1.1; color: #FFD0C0; background: #3A1F19; border: 2px solid var(--clay); }
+.plinth-who .tag { font-size: 15px; line-height: 1; }
+.plinth-who .px { max-width: 100%; overflow-wrap: anywhere; line-height: 1.5; }

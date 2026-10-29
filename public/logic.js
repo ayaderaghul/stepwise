@@ -1734,6 +1734,7 @@ class Component extends DCLogic {
     // Open trails first, sealed temples after, so the feed reads as "what you can do now".
     posts = posts.filter(function (x) { return !x.locked; }).concat(posts.filter(function (x) { return x.locked; }));
     var allCount = posts.length;
+    var allPosts = posts; // unfiltered, for the atlas
     if (s.filter === 'saved') posts = posts.filter(function (x) { return x.isSaved; });
     else if (s.filter !== 'all') posts = posts.filter(function (x) { return x.family === s.filter; });
     var solvedCount = Object.keys(s.solved).length;
@@ -1841,7 +1842,7 @@ class Component extends DCLogic {
       isWalk: s.screen === 'walk',
       isStep: inStep, isCode: inCode, isReview: inReview,
       isPractice: !!s.practice,
-      posts: posts, stones: stones, phaseLabel: phaseLabel, chips: chips, feedCount: feedCount,
+      posts: posts, allPosts: allPosts, stones: stones, phaseLabel: phaseLabel, chips: chips, feedCount: feedCount,
       cur: {
         title: p.title, diff: p.diff, family: p.family,
         gem: gemPixels(p.family, 2), gemColor: pg.color, gemCount: count(p.family),

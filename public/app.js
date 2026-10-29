@@ -831,7 +831,8 @@
   function atlasScreen() {
     var wv = game.worldVals();
     var postsByPid = {};
-    game.renderVals().posts.forEach(function (p) { postsByPid[p.pid] = p; });
+    // All temples, whatever filter the trail has on.
+    game.renderVals().allPosts.forEach(function (p) { postsByPid[p.pid] = p; });
     var head = '<header class="feed-head jungle-head">' + canopy() + skyLayer(wv.weather, wv.moon) +
       '<div class="brand-row"><div class="brand-col"><span class="brand">' + (wv.region ? esc(wv.region.name) : 'ATLAS') + '</span><span class="tag">' +
         (wv.region ? wv.region.cleared + '/' + wv.region.total + ' temples · ' + esc(wv.region.fam.toLowerCase()) + (wv.region.fam2 ? ' & ' + esc(wv.region.fam2.toLowerCase()) : '')
